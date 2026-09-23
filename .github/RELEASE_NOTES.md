@@ -28,15 +28,20 @@
 
 ## 安装步骤
 
-1. 下载本页附件里的 `B2Y-Vector-*-debug.apk`，安装：
+1. 下载本页附件里的 `B2Y-Vector-*.apk`，安装：
    ```bash
-   adb install -r B2Y-Vector-1.0.0-debug.apk
+   adb install -r B2Y-Vector-1.0.0.apk
    ```
 2. 打开 **Vector / LSPosed 管理器** → 启用 **B2Y 弹幕** 模块 → 勾选作用域 **YouTube**
 3. **强制停止** YouTube 客户端，再重新打开（只切后台不行）
 4. 打开桌面上的 **B2Y 弹幕** App，点一次 **保存设置**
    （被注入的进程通过 `XSharedPreferences` 读设置，文件不存在时会退回默认值）
 5. 打开任意 YouTube 视频 → 弹幕会自动加载
+
+> **首次安装如果是覆盖旧版本失败的**：早期测试包用的是临时 debug 密钥，签名不一致会导致
+> `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。先执行 `adb uninstall com.b2y.danmaku` 再安装即可
+> （会清掉模块里已保存的设置）。**从本版本起的后续 Release 都使用同一个固定发布密钥，
+> 可以直接覆盖升级。**
 
 ## 使用提示
 
@@ -49,8 +54,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `B2Y-Vector-<版本>-debug.apk` | 模块安装包（**debug 签名**，仅供个人安装使用） |
-| `B2Y-Vector-<版本>-debug.apk.sha256` | 上面的 APK 的 SHA-256 校验值 |
+| `B2Y-Vector-<版本>.apk` | 模块安装包，使用**固定的项目发布密钥**签名，可跨版本覆盖升级 |
+| `B2Y-Vector-<版本>.apk.sha256` | 上面的 APK 的 SHA-256 校验值 |
 
 ## 当前状态
 

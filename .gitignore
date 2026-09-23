@@ -14,3 +14,9 @@ Thumbs.db
 
 # 本地 APK 分析产物
 apk-analysis/
+
+# 签名密钥：绝对不能进版本库
+*.keystore
+*.jks
+*.p12
+signing/

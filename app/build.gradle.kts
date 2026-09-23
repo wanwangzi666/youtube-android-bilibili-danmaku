@@ -15,10 +15,35 @@ android {
         versionName = "1.0.0"
     }
 
+    /**
+     * 发布签名。
+     *
+     * 只在提供了 B2Y_KEYSTORE_PATH 环境变量时才启用 —— 也就是只在 CI 的发版流程里。
+     * 本地开发用 assembleDebug 即可，不需要任何密钥。
+     *
+     * 使用固定的发布密钥很重要：GitHub runner 每次构建都会生成新的 debug 密钥，
+     * 导致不同次构建的 APK 签名不一致，用户无法覆盖安装。
+     */
+    val signingReady = !System.getenv("B2Y_KEYSTORE_PATH").isNullOrBlank()
+
+    signingConfigs {
+        if (signingReady) {
+            create("release") {
+                storeFile = file(System.getenv("B2Y_KEYSTORE_PATH"))
+                storePassword = System.getenv("B2Y_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("B2Y_KEY_ALIAS")
+                keyPassword = System.getenv("B2Y_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (signingReady) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

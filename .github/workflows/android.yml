@@ -14,6 +14,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # ubuntu runner 镜像已预装 Android SDK；显式声明路径，避免依赖第三方 setup action
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,11 +29,25 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Inspect Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "--- platforms ---";   ls "$ANDROID_HOME/platforms"   2>/dev/null || echo "(none)"
+          echo "--- build-tools ---"; ls "$ANDROID_HOME/build-tools"  2>/dev/null || echo "(none)"
 
-      - name: Install SDK packages
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      - name: Ensure SDK packages
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME" -maxdepth 5 -name sdkmanager -type f 2>/dev/null | head -n1)"
+          echo "sdkmanager=$SDKMANAGER"
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+            "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0" "platform-tools" || true
+          else
+            echo "sdkmanager not found; rely on preinstalled SDK"
+          fi
+          echo "--- after ---"
+          ls "$ANDROID_HOME/platforms"  2>/dev/null || true
+          ls "$ANDROID_HOME/build-tools" 2>/dev/null || true
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew

@@ -1,0 +1,16 @@
+# Gradle / Android
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# 本地 APK 分析产物
+apk-analysis/

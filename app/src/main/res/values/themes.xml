@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="B2YTheme" parent="@android:style/Theme.Material">
+        <item name="android:colorPrimary">#FB7299</item>
+        <item name="android:colorAccent">#FB7299</item>
+        <item name="android:windowBackground">#12121A</item>
+    </style>
+</resources>

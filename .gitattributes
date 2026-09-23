@@ -1,0 +1,8 @@
+# 统一换行符：源码/LF，Windows 脚本/CRLF
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.jar binary
+*.png binary
+*.jpg binary
+*.apk binary

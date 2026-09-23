@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">B2Y 弹幕</string>
+    <string name="xposed_description">在 YouTube 客户端内同步显示哔哩哔哩弹幕（B站弹幕 / B2Y）</string>
+    <string-array name="xposed_scope">
+        <item>com.google.android.youtube</item>
+    </string-array>
+</resources>

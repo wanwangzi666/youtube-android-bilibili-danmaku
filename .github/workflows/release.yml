@@ -79,6 +79,10 @@ jobs:
 
       # 直接用 REST API，而不是依赖 gh 的隐式行为：
       # 每个附件都会打印服务端返回，上传失败立即退出。
+      #
+      # ⚠️ 排查提示：校验附件时**不要**读 `GET /releases/tags/{tag}` 返回的 `assets` 字段 ——
+      # GitHub 已不再在该响应里内联附件列表，它会恒为空数组，看起来就像"一个附件都没传上去"。
+      # 必须查 `GET /releases/{id}/assets` 这个子资源。
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

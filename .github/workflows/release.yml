@@ -3,8 +3,13 @@ name: Release
 on:
   push:
     tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 tag，例如 v1.0.0（必须已存在）'
+        required: true
 
-# 创建 Release 需要写权限；GitHub 会自动注入 GITHUB_TOKEN
+# 创建 Release / 上传附件需要写权限
 permissions:
   contents: write
 
@@ -15,6 +20,8 @@ jobs:
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      # tag 推送时用 ref 名；手动触发时用输入值
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
     steps:
       - name: Checkout
@@ -47,21 +54,87 @@ jobs:
 
       - name: Prepare release assets
         run: |
-          set -e
+          set -euo pipefail
           mkdir -p out
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           ASSET="out/B2Y-Vector-${VERSION}-debug.apk"
           cp app/build/outputs/apk/debug/app-debug.apk "$ASSET"
           sha256sum "$ASSET" | awk '{print $1}' > "${ASSET}.sha256"
-          ls -lh out
-          cat "${ASSET}.sha256"
+          echo "VERSION=$VERSION"
+          ls -l out/
 
-      - name: Create GitHub Release
+      - name: Verify assets exist
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          FILES=(out/*.apk out/*.sha256)
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "::error::没有生成任何发布附件"
+            exit 1
+          fi
+          for f in "${FILES[@]}"; do
+            echo "ok: $f  ($(stat -c%s "$f") bytes)"
+          done
+          echo "ASSET_COUNT=${#FILES[@]}" >> "$GITHUB_ENV"
+
+      # 直接用 REST API，而不是依赖 gh 的隐式行为：
+      # 每个附件都会打印服务端返回，上传失败立即退出。
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "B2Y for Vector ${GITHUB_REF_NAME}" \
-            --notes-file .github/RELEASE_NOTES.md \
-            --verify-tag \
-            out/B2Y-Vector-*-debug.apk out/B2Y-Vector-*-debug.apk.sha256
+          set -euo pipefail
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          UPLOAD="https://uploads.github.com/repos/${GITHUB_REPOSITORY}"
+          AUTH="Authorization: Bearer ${GH_TOKEN}"
+          ACCEPT="Accept: application/vnd.github+json"
+
+          echo "tag = ${RELEASE_TAG}"
+
+          RELEASE_ID="$(curl -sS -H "$AUTH" -H "$ACCEPT" "$API/releases/tags/${RELEASE_TAG}" | jq -r '.id // empty')"
+          if [ -z "$RELEASE_ID" ]; then
+            echo "creating release ${RELEASE_TAG}"
+            BODY_JSON="$(jq -n \
+              --arg tag "${RELEASE_TAG}" \
+              --arg name "B2Y for Vector ${RELEASE_TAG}" \
+              --rawfile body .github/RELEASE_NOTES.md \
+              '{tag_name:$tag, name:$name, body:$body, draft:false, prerelease:false}')"
+            RELEASE_ID="$(curl -sS -X POST -H "$AUTH" -H "$ACCEPT" \
+              -H 'Content-Type: application/json' -d "$BODY_JSON" \
+              "$API/releases" | jq -r '.id // empty')"
+          else
+            echo "release 已存在 (id=${RELEASE_ID})，改为上传附件"
+          fi
+          if [ -z "$RELEASE_ID" ]; then
+            echo "::error::创建/查找 Release 失败"
+            exit 1
+          fi
+
+          # 清掉同名旧附件，保证脚本可重复执行
+          for aid in $(curl -sS -H "$AUTH" -H "$ACCEPT" "$API/releases/${RELEASE_ID}/assets" | jq -r '.[].id'); do
+            curl -sS -X DELETE -H "$AUTH" -H "$ACCEPT" "$API/releases/assets/${aid}" > /dev/null
+          done
+
+          shopt -s nullglob
+          FILES=(out/*.apk out/*.sha256)
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "::error::没有可上传的附件"
+            exit 1
+          fi
+
+          for f in "${FILES[@]}"; do
+            name="$(basename "$f")"
+            echo "uploading ${name} ($(stat -c%s "$f") bytes)"
+            resp="$(curl -sS -X POST -H "$AUTH" \
+              -H 'Content-Type: application/octet-stream' \
+              --data-binary "@${f}" \
+              "${UPLOAD}/releases/${RELEASE_ID}/assets?name=${name}")"
+            echo "$resp" | jq -r '"  server: " + (.name // .message // "?")'
+            echo "$resp" | jq -e '.id' > /dev/null || { echo "::error::上传 ${name} 失败"; exit 1; }
+          done
+
+          echo "=== 最终附件列表 ==="
+          curl -sS -H "$AUTH" -H "$ACCEPT" "$API/releases/${RELEASE_ID}/assets" \
+            | jq -r '.[] | "  \(.name)  \(.size) bytes  \(.browser_download_url)"'
+
+          echo "release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"

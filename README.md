@@ -72,6 +72,27 @@ hook 播放器」这一层，使其能运行在 Vector / LSPosed 上。
 adb install -r app-debug.apk
 ```
 
+#### ⚠️ 签名：本地构建与 Release 包不能互相覆盖
+
+模块有**两种签名**，装了其中一种就没法直接装另一种（会报
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），必须先卸载：
+
+| 包 | 签名 | 证书 SHA-256 |
+| --- | --- | --- |
+| GitHub Release 的 `B2Y-Vector-*.apk`、本地 `assembleRelease` | 固定的项目发布密钥 | `ca566fdb5ec9af60241c43232cdfbb85167c7e0f25952922558b31471013a85e` |
+| 本地 `assembleDebug`（`app-debug.apk`） | 你机器的 `~/.android/debug.keystore` | 每台机器不同，例如 `6550c1c9…d3` |
+
+用 `apksigner` 可以查任意一个包实际用的是哪种签名：
+
+```bash
+apksigner verify --print-certs app-debug.apk
+```
+
+**建议**：统一用 GitHub Release 的包（或本地 `assembleRelease`），因为发布密钥是固定的，
+以后每个版本都能直接覆盖升级。如果你之前装的是本地 `assembleDebug` 的包，想保留已保存的
+设置而不卸载，就用同一台机器重新 `assembleDebug` 出一个新版本包来覆盖 —— 签名一致，
+但这条路径生成的包**不能**与 Release 包混用，否则每次换来源都要卸载一次。
+
 然后在 **Vector / LSPosed 管理器** 中：
 
 1. 启用 **B2Y 弹幕** 模块
@@ -186,6 +207,7 @@ app/src/main/java/com/b2y/danmaku/
 | 刷 Shorts 时总弹「选择要同步的 B 站视频」 | 在模块设置或播放页悬浮面板里关掉「Shorts 也匹配弹幕」；关掉后进入 Shorts 不再搜索，弹幕与悬浮按钮一并隐藏 |
 | 关掉了 Shorts 匹配，普通视频也被跳过 | Shorts 判定误判。打开悬浮面板看「Shorts：」那一行的判定依据（播放器视图 / 几何）并反馈该行文字 |
 | 某些 Shorts 没被识别成 Shorts | 已知盲区：超长屏（宽高比 ≥ 2.1）上看 9:16 的 Shorts 时，「适应宽度」后画面高度会掉到几何阈值以下。此时靠「Shorts 播放器视图」那层判定，日志里会出现「检测到 Shorts 播放器视图」 |
+| 安装时报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | 设备上已装的那个包和要装的包签名的证书不同。见第二节「签名」小节：本地 `assembleDebug` 的包与 Release 包不能互相覆盖，需要先 `adb uninstall com.b2y.danmaku`（会清掉已保存的设置），或者用同一来源重新出包 |
 | 刷 Shorts 时总是弹「选择要同步的 B 站视频」 | 在模块设置或播放页悬浮面板里关掉「Shorts 也匹配弹幕」；关掉后进入 Shorts 不再搜索，弹幕与悬浮按钮一并隐藏 |
 | 关掉了 Shorts 匹配，但普通视频也被跳过 | 说明 Shorts 判定误判。打开悬浮面板看「Shorts：」那一行的判定依据（视图 / 几何），并反馈该行文字 |
 

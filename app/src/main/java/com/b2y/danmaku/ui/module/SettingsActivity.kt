@@ -31,9 +31,10 @@ class SettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         current = Settings.loadLocal(this)
-        // Shorts 开关以「被注入进程自己维护的运行时值」为准（如果设置过），
+        // 两个开关都以「被注入进程自己维护的运行时值」为准（如果设置过），
         // 这样设置页显示的状态和 YouTube 里实际生效的完全一致
         current = current.copy(
+            enabled = Settings.loadLocalEnabled(this, current.enabled),
             matchInShorts = Settings.loadLocalMatchInShorts(this, current.matchInShorts)
         )
 
@@ -63,7 +64,12 @@ class SettingsActivity : Activity() {
         ))
 
         box.addView(header("基础"))
-        box.addView(check("启用弹幕", current.enabled) { current = current.copy(enabled = it) })
+        box.addView(check("启用弹幕（总开关）", current.enabled) { current = current.copy(enabled = it) })
+        box.addView(note(
+            "总开关关掉后：不再自动匹配，弹幕层隐藏，悬浮「弹」按钮仍保留 —— " +
+                "可以直接在播放页面板顶部的「全局设置」里随时开回来。\n" +
+                "这里保存后需要切换一次视频生效；播放页面板里的开关是点一下立刻生效。"
+        ))
         box.addView(check("进入视频后自动搜索并加载", current.autoLoad) { current = current.copy(autoLoad = it) })
         box.addView(check("显示悬浮「弹」按钮", current.showFloatButton) { current = current.copy(showFloatButton = it) })
         box.addView(check("优先使用 YouTube 原始标题（oEmbed，匹配更准）", current.preferOembedTitle) {
@@ -129,7 +135,8 @@ class SettingsActivity : Activity() {
             isAllCaps = false
             setOnClickListener {
                 Settings.saveLocal(this@SettingsActivity, current)
-                // Shorts 开关额外写一份被注入进程一定会读到的副本
+                // 两个开关额外写一份被注入进程一定会读到的运行时副本
+                Settings.saveLocalEnabled(this@SettingsActivity, current.enabled)
                 Settings.saveLocalMatchInShorts(this@SettingsActivity, current.matchInShorts)
                 Toast.makeText(
                     this@SettingsActivity,

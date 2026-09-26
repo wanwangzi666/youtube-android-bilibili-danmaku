@@ -104,4 +104,26 @@ class SettingsCodecTest {
         assertFalse(SettingsCodec.resolveMatchInShorts(runtimeOverride = false, fromSettings = true))
         assertTrue(SettingsCodec.resolveMatchInShorts(runtimeOverride = true, fromSettings = false))
     }
+
+    // ------------------------------------------------------------------ 总开关
+
+    @Test
+    fun `总开关同样遵循运行时优先`() {
+        assertFalse(SettingsCodec.resolveEnabled(runtimeOverride = false, fromSettings = true))
+        assertTrue(SettingsCodec.resolveEnabled(runtimeOverride = true, fromSettings = false))
+        assertTrue(SettingsCodec.resolveEnabled(runtimeOverride = null, fromSettings = true))
+        assertFalse(SettingsCodec.resolveEnabled(runtimeOverride = null, fromSettings = false))
+    }
+
+    @Test
+    fun `总开关默认是开`() {
+        assertTrue(DanmakuSettings().enabled)
+        assertTrue(SettingsCodec.decode("{}").enabled)
+    }
+
+    @Test
+    fun `关掉的总开关能往返`() {
+        val off = DanmakuSettings(enabled = false)
+        assertFalse(SettingsCodec.decode(SettingsCodec.encode(off)).enabled)
+    }
 }

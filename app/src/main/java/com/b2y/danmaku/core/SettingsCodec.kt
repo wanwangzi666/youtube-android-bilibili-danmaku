@@ -55,6 +55,12 @@ object SettingsCodec {
     fun resolveMatchInShorts(runtimeOverride: Boolean?, fromSettings: Boolean): Boolean =
         runtimeOverride ?: fromSettings
 
+    /**
+     * 「总开关（是否匹配并显示弹幕）」的最终生效值，优先级规则同 [resolveMatchInShorts]。
+     */
+    fun resolveEnabled(runtimeOverride: Boolean?, fromSettings: Boolean): Boolean =
+        runtimeOverride ?: fromSettings
+
     fun decode(json: String): DanmakuSettings {
         val o = JSONObject(json)
         val d = DanmakuSettings()

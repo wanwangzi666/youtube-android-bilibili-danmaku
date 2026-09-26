@@ -55,17 +55,22 @@ class ControlPanel(
         }
         box.addView(statusView)
 
-        box.addView(sectionTitle("Shorts（竖屏短视频）"))
-        // 全局开关：直接改会话控制器的运行时开关，不依赖跨进程设置读取
-        box.addView(check("在 Shorts 里也匹配弹幕", VideoSessionController.isMatchInShortsEnabled()) { checked ->
+        box.addView(sectionTitle("全局设置（所有视频生效，立即保存）"))
+        // 两个开关都直接改会话控制器的运行时开关，不走跨进程设置读取（那条路实测不可靠）
+        box.addView(check("匹配并显示弹幕（总开关）", VideoSessionController.isMasterEnabled()) { checked ->
+            VideoSessionController.setEnabled(checked)
+            refresh()
+        })
+        box.addView(check("在 Shorts（竖屏短视频）里也匹配", VideoSessionController.isMatchInShortsEnabled()) { checked ->
             VideoSessionController.setMatchInShorts(checked)
             refresh()
         })
         box.addView(TextView(activity).apply {
             setTextColor(0xFFB0B0B0.toInt())
             textSize = 11f
-            text = "全局生效，立即起作用（并会保存）。取消勾选后：进入 Shorts 不搜索、不显示弹幕，" +
-                "悬浮按钮也隐藏；下面的手动加载仍然可用。"
+            text = "总开关关掉后：不再自动搜索，弹幕层隐藏（悬浮按钮保留，方便随时开回来）；" +
+                "下面的「粘贴 B 站链接 / 搜索关键词」仍可手动加载。\n" +
+                "Shorts 开关只影响竖屏短视频流。"
         })
 
         box.addView(sectionTitle("识别与加载"))
@@ -118,11 +123,11 @@ class ControlPanel(
         box.addView(slider("权重过滤", 10, local.weightThreshold.coerceIn(0, 10)) { v ->
             local = local.copy(weightThreshold = v); apply()
         })
+        // 这里只留「清空弹幕」：开关弹幕已经由顶部「全局设置」里的总开关负责，
+        // 同一个功能放两处容易让人以为一个是临时的、一个是长期的。
         box.addView(row(
-            action(if (local.enabled) "关闭弹幕" else "开启弹幕") {
-                local = local.copy(enabled = !local.enabled); apply(); refresh()
-            },
-            action("清空弹幕") { overlay.clearDanmaku(); refresh() }
+            action("清空弹幕") { overlay.clearDanmaku(); refresh() },
+            action("重新搜索") { VideoSessionController.retrySearch(); refresh() }
         ))
 
         box.addView(sectionTitle("提示"))
@@ -174,6 +179,9 @@ class ControlPanel(
         val id = VideoSessionController.currentVideoId() ?: "未识别"
         val bvid = VideoSessionController.currentBvid() ?: "-"
         val title = VideoSessionController.currentTitle() ?: "-"
+        // 开关状态以会话控制器的生效值为准（不是面板里的临时副本）
+        val masterOn = VideoSessionController.isMasterEnabled()
+        val shortsMatch = VideoSessionController.isMatchInShortsEnabled()
         statusView?.text = buildString {
             append("状态：").append(overlay.currentStatus()).append('\n')
             append("YouTube 视频：").append(id).append('\n')
@@ -181,12 +189,11 @@ class ControlPanel(
             append("B 站视频：").append(bvid).append('\n')
             append("当前弹幕：").append(overlay.danmakuCount()).append(" 条\n")
             append("播放位置：").append(com.b2y.danmaku.hook.PlaybackClockHolder.clock.positionMs() / 1000)
-                .append(" s")
-            if (!local.matchInShorts) {
-                append('\n')
-                append("Shorts：").append(if (overlay.isShortsBlocked()) "已屏蔽弹幕" else "未检测到")
-                    .append("（").append(overlay.shortsReason()).append("）")
-            }
+                .append(" s\n")
+            append("总开关：").append(if (masterOn) "开启" else "关闭（不匹配、不显示）")
+            append("　Shorts 匹配：").append(if (shortsMatch) "开启" else "关闭")
+            append('\n')
+            append("Shorts：").append(overlay.shortsDiagnosticsLine())
         }
         diagnosticsView?.text = overlay.diagnostics()
     }

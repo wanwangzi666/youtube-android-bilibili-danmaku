@@ -178,7 +178,7 @@ object VideoSessionController {
             )
             return
         }
-        if (skipBecauseShorts()) return
+        if (skipBecauseBlocked()) return
         acceptVideoId(id)
     }
 
@@ -203,6 +203,44 @@ object VideoSessionController {
         val since = android.os.SystemClock.elapsedRealtime() - VideoSurfaceTracker.lastFoundRealtimeMs
         if (since > WATCH_SCREEN_VALID_MS) return false
         return VideoSurfaceTracker.lastChosenAreaRatio >= WATCH_SCREEN_MIN_AREA_RATIO
+    }
+
+    // ------------------------------------------------------------------ 全局开关
+
+    /**
+     * **总开关**：是否匹配并显示弹幕（浮层面板顶部的全局开关）。
+     *
+     * 优先级同 [matchInShorts]：运行时开关 > 模块 App 的 JSON 配置。
+     */
+    fun isEnabled(): Boolean =
+        SettingsCodec.resolveEnabled(Settings.loadRuntimeEnabled(), settings.enabled)
+
+    /** 供控制面板显示总开关状态 */
+    fun isMasterEnabled(): Boolean = isEnabled()
+
+    /**
+     * 面板里的全局总开关：立即生效并落盘。
+     *
+     * 关掉时不只是"不显示"——自动匹配也会停下来，并清空已加载的弹幕、
+     * 收掉可能开着的选择弹窗，等同于一键静音。
+     */
+    fun setEnabled(value: Boolean): Boolean {
+        Settings.saveRuntimeEnabled(value)
+        settings = settings.copy(enabled = value)
+        Log.i("总开关已设为 $value（全局，立即生效）")
+        val ov = overlay
+        if (ov != null) {
+            val s = settings
+            main.post { ov.applySettings(s) }
+        }
+        if (value) {
+            setStatus("已开启弹幕")
+        } else {
+            setStatus("已关闭弹幕：不再匹配，弹幕已隐藏")
+            dismissShortsBlockedUi()
+            main.post { ov?.clearDanmaku() }
+        }
+        return value
     }
 
     // ------------------------------------------------------------------ Shorts 屏蔽
@@ -265,8 +303,18 @@ object VideoSessionController {
         return ShortsDetector.isShortsActive(shortsCheckActivity())
     }
 
+    /** 自动匹配被挡下来的原因；null 表示不挡 */
+    private enum class BlockReason { MASTER_OFF, SHORTS }
+
+    /** 综合判定：总开关关掉、或（Shorts 且 Shorts 开关关掉）时，自动匹配应该停下来 */
+    private fun currentBlockReason(): BlockReason? = when {
+        !isEnabled() -> BlockReason.MASTER_OFF
+        isShortsBlockedNow() -> BlockReason.SHORTS
+        else -> null
+    }
+
     /**
-     * 自动匹配的唯一闸门：命中屏蔽时放弃本次自动搜索，**并且把已经弹出来的
+     * 自动匹配的统一闸门：命中时就放弃本次自动搜索，**并且把已经弹出来的
      * 「选择要同步的 B 站视频」关掉、清空弹幕**。
      *
      * 后面的部分很关键：搜索是异步的，等结果回来时用户可能已经滑进 Shorts 了；
@@ -275,15 +323,24 @@ object VideoSessionController {
      * 注意：**只拦自动流程**。控制面板里的「粘贴 B 站链接 / 搜索关键词 / 番剧模式」是用户
      * 明确的手动意图，不做拦截。
      */
-    private fun skipBecauseShorts(): Boolean {
-        if (!isShortsBlockedNow()) return false
-        Log.i("Shorts 已屏蔽自动匹配（${ShortsDetector.lastReason}）")
-        dismissShortsBlockedUi()
-        setStatus("当前是 Shorts，已跳过弹幕匹配（要强制加载可在悬浮面板里手动粘贴 B 站链接）")
+    private fun skipBecauseBlocked(): Boolean {
+        val reason = currentBlockReason() ?: return false
+        when (reason) {
+            BlockReason.MASTER_OFF -> {
+                Log.i("总开关已关闭，跳过自动匹配")
+                dismissShortsBlockedUi()
+                setStatus("已关闭弹幕：不再自动匹配（可在面板顶部重新开启）")
+            }
+            BlockReason.SHORTS -> {
+                Log.i("Shorts 已屏蔽自动匹配（${ShortsDetector.lastReason}）")
+                dismissShortsBlockedUi()
+                setStatus("当前是 Shorts，已跳过弹幕匹配（要强制加载可在悬浮面板里手动粘贴 B 站链接）")
+            }
+        }
         return true
     }
 
-    /** 把「因为进了 Shorts 而不该存在」的界面收掉：选择弹窗 + 已加载的弹幕 */
+    /** 把「因为进了 Shorts 而多出来的界面」收掉：选择弹窗 + 已加载的弹幕 */
     private fun dismissShortsBlockedUi() {
         dismissChooser()
         val ov = overlay
@@ -294,16 +351,25 @@ object VideoSessionController {
     }
 
     /**
-     * 在「要显示选择弹窗」的最后一步再确认一次是否是 Shorts。
+     * 在「要显示选择弹窗」的最后一步再确认一次。
      *
-     * 与 [skipBecauseShorts] 的区别是：这个在 `main.post {}` 之后执行，是最贴近用户看到
+     * 与 [skipBecauseBlocked] 的区别是：这个在 `main.post {}` 之后执行，是最贴近用户看到
      * 界面的那一层，作为兜底。
      */
     private fun shouldBlockChooser(): Boolean {
-        if (!isShortsBlockedNow()) return false
-        Log.i("选择弹窗被 Shorts 拦截（${ShortsDetector.lastReason}）")
-        dismissShortsBlockedUi()
-        setStatus("当前是 Shorts，已跳过弹幕匹配")
+        val reason = currentBlockReason() ?: return false
+        when (reason) {
+            BlockReason.MASTER_OFF -> {
+                Log.i("选择弹窗被总开关拦截")
+                dismissShortsBlockedUi()
+                setStatus("已关闭弹幕：不再自动匹配")
+            }
+            BlockReason.SHORTS -> {
+                Log.i("选择弹窗被 Shorts 拦截（${ShortsDetector.lastReason}）")
+                dismissShortsBlockedUi()
+                setStatus("当前是 Shorts，已跳过弹幕匹配")
+            }
+        }
         return true
     }
 
@@ -326,7 +392,7 @@ object VideoSessionController {
         val t = synchronized(pendingIdLock) { pendingTitle } ?: return@Runnable
         if (videoId != null) return@Runnable
         if (!isOnWatchScreen()) return@Runnable
-        if (skipBecauseShorts()) return@Runnable
+        if (skipBecauseBlocked()) return@Runnable
         statusText = "仅凭标题识别：$t"
         startTitleOnlyResolve(t)
     }
@@ -443,7 +509,7 @@ object VideoSessionController {
     // ------------------------------------------------------------------ 内部流程
 
     private fun startResolve(id: String, ov: DanmakuOverlay, force: Boolean = false) {
-        if (skipBecauseShorts()) return
+        if (skipBecauseBlocked()) return
         val gen = generation.incrementAndGet()
         if (force) lastResults = emptyList()
         setStatus("正在识别标题…")
@@ -585,7 +651,15 @@ object VideoSessionController {
             currentBvid = bvid
             main.post {
                 if (gen != generation.get()) return@post
-                // 最后一道闸：下载期间可能已经滑进 Shorts 了，这时候不能把弹幕贴上去
+                // 最后一道闸：下载期间可能已经滑进 Shorts、或用户把总开关关掉了，
+                // 这时候不能把弹幕贴上去（否则关掉开关后还会闪一下弹幕）
+                if (!isEnabled()) {
+                    Log.i("弹幕下载完成时总开关已关闭，丢弃本次结果")
+                    ov.clearDanmaku()
+                    currentBvid = null
+                    setStatus("弹幕总开关已关闭，已丢弃刚下载的弹幕")
+                    return@post
+                }
                 if (isShortsBlockedNow()) {
                     Log.i("弹幕下载完成时已在 Shorts，丢弃本次结果（${ShortsDetector.lastReason}）")
                     ov.clearDanmaku()
@@ -650,14 +724,12 @@ object VideoSessionController {
         }
     }
 
-    /** 浮层刷新时调用：如果已经滑进 Shorts，把残留的选择弹窗收掉 */
+    /** 浮层刷新时调用：如果已经滑进 Shorts、或总开关被关掉，把残留的选择弹窗收掉 */
     fun onOverlayTick() {
-        if (matchInShorts()) return
         if (chooserDialog == null) return
-        if (isShortsBlockedNow()) {
-            Log.i("浮层轮询发现已进入 Shorts，关闭选择弹窗")
-            dismissShortsBlockedUi()
-        }
+        val reason = currentBlockReason() ?: return
+        Log.i("浮层轮询发现应当停止匹配（$reason），关闭选择弹窗")
+        dismissShortsBlockedUi()
     }
 
     private fun setStatus(text: String) {

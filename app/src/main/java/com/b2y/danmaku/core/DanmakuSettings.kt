@@ -130,8 +130,14 @@ object Settings {
 
     private const val KEY_MATCH_IN_SHORTS = "match_in_shorts"
 
+    /** 总开关：是否匹配并显示弹幕（浮层面板里那个全局开关） */
+    private const val KEY_ENABLED = "enabled"
+
     @Volatile
     private var runtimeMatchInShorts: Boolean? = null
+
+    @Volatile
+    private var runtimeEnabled: Boolean? = null
 
     @Volatile
     private var runtimeReadAtMs: Long = 0L
@@ -141,28 +147,58 @@ object Settings {
 
     /**
      * 读取被注入进程自己的「Shorts 里也匹配」开关；没设置过返回 null。
-     *
-     * 带 [RUNTIME_TTL_MS] 的缓存：浮层每次刷新都会问，不能每次都去读文件。
      */
     fun loadRuntimeMatchInShorts(): Boolean? {
         val now = android.os.SystemClock.elapsedRealtime()
-        val cachedValue = runtimeMatchInShorts
-        if (cachedValue != null && now - runtimeReadAtMs < RUNTIME_TTL_MS) return cachedValue
-        val v = try {
-            val xsp = XSharedPreferences(RUNTIME_PREF_NAME)
-            xsp.reload()
-            if (xsp.contains(KEY_MATCH_IN_SHORTS)) xsp.getBoolean(KEY_MATCH_IN_SHORTS, false) else null
-        } catch (t: Throwable) {
-            Log.w("读取运行时 Shorts 开关失败", t)
-            cachedValue
-        }
+        val cached = runtimeMatchInShorts
+        if (cached != null && now - runtimeReadAtMs < RUNTIME_TTL_MS) return cached
+        val v = readRuntimeBoolean(KEY_MATCH_IN_SHORTS)
         runtimeMatchInShorts = v
         runtimeReadAtMs = now
         return v
     }
 
+    /** 读取被注入进程自己的「总开关」；没设置过返回 null。 */
+    fun loadRuntimeEnabled(): Boolean? {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val cached = runtimeEnabled
+        if (cached != null && now - runtimeReadAtMs < RUNTIME_TTL_MS) return cached
+        val v = readRuntimeBoolean(KEY_ENABLED)
+        runtimeEnabled = v
+        runtimeReadAtMs = now
+        return v
+    }
+
+    private fun readRuntimeBoolean(key: String): Boolean? = try {
+        val xsp = XSharedPreferences(RUNTIME_PREF_NAME)
+        xsp.reload()
+        if (xsp.contains(key)) xsp.getBoolean(key, false) else null
+    } catch (t: Throwable) {
+        Log.w("读取运行时开关 $key 失败", t)
+        null
+    }
+
+    /** 把两个运行时开关一起写盘（总开关与 Shorts 开关共用一份文件） */
+    private fun writeRuntime(prefs: Map<String, Boolean>) {
+        try {
+            val ctx = currentApplication()
+            if (ctx == null) {
+                Log.w("拿不到 Application，运行时开关只在本次进程内生效")
+                return
+            }
+            val editor = ctx.getSharedPreferences(RUNTIME_PREF_NAME, Context.MODE_PRIVATE).edit()
+            for ((k, v) in prefs) editor.putBoolean(k, v)
+            editor.commit()
+            Log.i("运行时开关已保存: $prefs")
+        } catch (t: Throwable) {
+            Log.w("保存运行时开关失败", t)
+        }
+    }
+
     /** 运行时开关是否已经被设置过（浮层开关或开机时同步过） */
     fun runtimeMatchInShortsLoaded(): Boolean = runtimeMatchInShorts != null
+
+    fun runtimeEnabledLoaded(): Boolean = runtimeEnabled != null
 
     /**
      * 写入被注入进程自己的「Shorts 里也匹配」开关（浮层的全局开关用这个）。
@@ -174,18 +210,18 @@ object Settings {
     fun saveRuntimeMatchInShorts(value: Boolean) {
         runtimeMatchInShorts = value
         runtimeReadAtMs = android.os.SystemClock.elapsedRealtime()
-        try {
-            val ctx = currentApplication()
-            if (ctx != null) {
-                ctx.getSharedPreferences(RUNTIME_PREF_NAME, Context.MODE_PRIVATE)
-                    .edit().putBoolean(KEY_MATCH_IN_SHORTS, value).commit()
-                Log.i("运行时 Shorts 开关已保存: $value")
-            } else {
-                Log.w("拿不到 Application，运行时 Shorts 开关只在本次进程内生效")
-            }
-        } catch (t: Throwable) {
-            Log.w("保存运行时 Shorts 开关失败", t)
-        }
+        writeRuntime(mapOf(KEY_MATCH_IN_SHORTS to value))
+    }
+
+    /**
+     * 写入被注入进程自己的「总开关」（浮层面板里的全局开关用这个）。
+     *
+     * 同样只写运行时这一份：模块 App 的读取入口 [loadLocalEnabled] 会优先读它。
+     */
+    fun saveRuntimeEnabled(value: Boolean) {
+        runtimeEnabled = value
+        runtimeReadAtMs = android.os.SystemClock.elapsedRealtime()
+        writeRuntime(mapOf(KEY_ENABLED to value))
     }
 
     /** 拿到宿主 App 的 Context（由 [de.robv.android.xposed.IXposedHookLoadPackage] 侧注入） */
@@ -201,36 +237,47 @@ object Settings {
     // ---- 模块 App 进程侧 ----
 
     /**
-     * 模块 App 侧读「Shorts 里也匹配」的最终生效值。
-     *
-     * 由于被注入进程会把浮层开关写进 [RUNTIME_PREF_NAME]，这里也读它 —— 这样两个入口
-     * 显示的状态一致，不会出现「设置页显示 A、实际生效 B」。
+     * 模块 App 侧读 [RUNTIME_PREF_NAME] 里的布尔开关；文件里没有该键时返回 fallback。
      */
-    fun loadLocalMatchInShorts(context: Context, fallback: Boolean): Boolean =
+    private fun loadLocalRuntimeBoolean(context: Context, key: String, fallback: Boolean): Boolean =
         try {
             val sp = context.getSharedPreferences(RUNTIME_PREF_NAME, Context.MODE_PRIVATE)
-            if (sp.contains(KEY_MATCH_IN_SHORTS)) sp.getBoolean(KEY_MATCH_IN_SHORTS, fallback) else fallback
+            if (sp.contains(key)) sp.getBoolean(key, fallback) else fallback
         } catch (t: Throwable) {
             fallback
         }
 
+    private fun saveLocalRuntimeBoolean(context: Context, key: String, value: Boolean) {
+        try {
+            context.getSharedPreferences(RUNTIME_PREF_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(key, value).commit()
+            Log.i("模块设置侧已保存运行时开关 $key = $value")
+        } catch (t: Throwable) {
+            Log.w("保存运行时开关 $key 失败", t)
+        }
+    }
+
+    /** 模块 App 侧读「Shorts 里也匹配」的最终生效值 */
+    fun loadLocalMatchInShorts(context: Context, fallback: Boolean): Boolean =
+        loadLocalRuntimeBoolean(context, KEY_MATCH_IN_SHORTS, fallback)
+
+    /** 模块 App 侧读「总开关」的最终生效值 */
+    fun loadLocalEnabled(context: Context, fallback: Boolean): Boolean =
+        loadLocalRuntimeBoolean(context, KEY_ENABLED, fallback)
+
     /**
      * 模块 App 侧写「Shorts 里也匹配」。
      *
-     * 同时写两处：
-     * - JSON 配置（保持配置完整、备份用）
-     * - [RUNTIME_PREF_NAME]：被注入进程优先读这一份，**这次一定是同步的**，
-     *   因为它是同一个文件、同一个 app 的私有目录，不依赖任何跨进程机制
+     * 除了 JSON 配置（由 [saveLocal] 负责），额外写一份 [RUNTIME_PREF_NAME]：
+     * 被注入进程优先读这一份，**这次一定是同步的** —— 同一个文件、同一个 app 的私有目录，
+     * 不依赖任何跨进程机制。
      */
-    fun saveLocalMatchInShorts(context: Context, value: Boolean) {
-        try {
-            context.getSharedPreferences(RUNTIME_PREF_NAME, Context.MODE_PRIVATE)
-                .edit().putBoolean(KEY_MATCH_IN_SHORTS, value).commit()
-            Log.i("模块设置侧已保存 Shorts 开关: $value")
-        } catch (t: Throwable) {
-            Log.w("保存 Shorts 开关失败", t)
-        }
-    }
+    fun saveLocalMatchInShorts(context: Context, value: Boolean) =
+        saveLocalRuntimeBoolean(context, KEY_MATCH_IN_SHORTS, value)
+
+    /** 模块 App 侧写「总开关」，同样额外写一份运行时副本 */
+    fun saveLocalEnabled(context: Context, value: Boolean) =
+        saveLocalRuntimeBoolean(context, KEY_ENABLED, value)
 
     fun loadLocal(context: Context): DanmakuSettings {
         val sp = context.getSharedPreferences(DanmakuSettings.PREF_NAME, Context.MODE_PRIVATE)

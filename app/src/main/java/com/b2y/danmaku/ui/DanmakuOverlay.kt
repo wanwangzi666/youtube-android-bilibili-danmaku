@@ -268,17 +268,22 @@ class DanmakuOverlay(private val activity: Activity) {
         view.setVideoRect(null)
     }
 
-    // ------------------------------------------------------------------ Shorts
+    // ------------------------------------------------------------------ 全局开关 / Shorts
 
     /**
-     * 更新「是否处于被屏蔽的 Shorts」状态，并同步弹幕与悬浮按钮的显隐。
+     * 刷新「弹幕该不该显示」的状态，并同步弹幕层与悬浮按钮的显隐。
+     *
+     * 两种情形都会让弹幕层隐藏：
+     * - **总开关被关掉**（面板顶部的全局开关）—— 不再匹配，也不显示
+     * - **当前是 Shorts 且 Shorts 开关是关的**
      *
      * 只在状态发生变化时改动视图，避免每 250ms 反复触发可见性/重绘。
+     * 注意：总开关关掉时**悬浮按钮仍然保留**，否则用户就没法在面板里把它开回来了。
      */
     private fun updateShortsState(videoRect: Rect?) {
         ShortsDetector.onVideoBounds(videoRect)
-        val blocked = !VideoSessionController.isMatchInShortsEnabled() &&
-            ShortsDetector.isShortsActive(activity)
+        // 用短路求值逐个判断，这样日志能说清到底是哪个原因（不是靠事后重算 masterOff）
+        val blocked = isMasterOff() || isBlockedShorts()
         // 交给会话控制器收掉可能残留的「选择要同步的 B 站视频」弹窗
         try {
             VideoSessionController.onOverlayTick()
@@ -289,43 +294,59 @@ class DanmakuOverlay(private val activity: Activity) {
             updateFloatButtonVisibility()
             return
         }
+        val wasBlocked = shortsBlocked
         shortsBlocked = blocked
         val view = danmakuView
         if (view != null) {
             if (blocked) {
                 view.setAutoInvalidate(false)
                 if (view.visibility == View.VISIBLE) view.visibility = View.GONE
-                Log.i("进入 Shorts：已暂停弹幕显示")
+                Log.i(if (isMasterOff()) "总开关关闭：已隐藏弹幕层" else "进入 Shorts：已暂停弹幕显示")
             } else {
                 view.visibility = View.VISIBLE
                 view.setAutoInvalidate(true)
                 view.markNeedsResync()
-                Log.i("离开 Shorts：恢复弹幕显示")
+                Log.i(if (wasBlocked) "恢复弹幕显示" else "弹幕层重新可见")
             }
         }
         updateFloatButtonVisibility()
     }
 
-    /** 悬浮「弹」按钮：既要看设置开关，也要看当前是否处于被屏蔽的 Shorts */
+    private fun isMasterOff(): Boolean = !VideoSessionController.isMasterEnabled()
+
+    private fun isBlockedShorts(): Boolean =
+        !VideoSessionController.isMatchInShortsEnabled() && ShortsDetector.isShortsActive(activity)
+
+    /**
+     * 悬浮「弹」按钮是否显示。
+     *
+     * 只有两种情况会隐藏它：设置里主动关了「显示悬浮按钮」，或当前是被屏蔽的 Shorts。
+     * **总开关关掉时不隐藏** —— 那是用户自己按下的开关，必须留个入口让他开回来。
+     */
     private fun updateFloatButtonVisibility() {
         val button = floatButton ?: return
-        val visible = currentSettings.showFloatButton && !shortsBlocked
+        val inBlockedShorts = shortsBlocked && VideoSessionController.isMasterEnabled()
+        val visible = currentSettings.showFloatButton && !inBlockedShorts
         val target = if (visible) View.VISIBLE else View.GONE
         if (button.visibility != target) button.visibility = target
     }
 
-    /** 供控制面板 / 诊断展示：当前是否因为 Shorts 而停用了弹幕 */
+    /** 供控制面板 / 诊断展示：当前是否因为 Shorts 或总开关而停用了弹幕 */
     fun isShortsBlocked(): Boolean = shortsBlocked
 
     fun shortsReason(): String = ShortsDetector.lastReason
 
-    /** 诊断用：把「判定结果」和「设置是否允许」两件事分开说清楚 */
+    /** 供控制面板显示的那一行 Shorts 说明 */
+    fun shortsDiagnosticsLine(): String = shortsDiagnostics()
+
+    /** 诊断用：把「判定结果」和「开关状态」两件事分开说清楚 */
     private fun shortsDiagnostics(): String {
+        if (isMasterOff()) return "总开关已关闭，未做匹配；判定依据：${ShortsDetector.lastReason}"
         val detected = ShortsDetector.isShortsActive(activity)
         val allowed = VideoSessionController.isMatchInShortsEnabled()
         return when {
-            detected && !allowed -> "已识别为 Shorts；开关=关闭 → 已屏蔽。判定依据：${ShortsDetector.lastReason}"
-            detected && allowed -> "已识别为 Shorts，但开关=开启（面板顶部的「Shorts 里也匹配弹幕」是勾选状态）"
+            detected && !allowed -> "已识别为 Shorts；Shorts 开关=关闭 → 已屏蔽。判定依据：${ShortsDetector.lastReason}"
+            detected && allowed -> "已识别为 Shorts，但 Shorts 开关=开启（面板「全局设置」里是勾选状态）"
             else -> "未识别为 Shorts。${ShortsDetector.lastReason}"
         }
     }

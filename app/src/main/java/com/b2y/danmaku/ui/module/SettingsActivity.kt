@@ -47,14 +47,15 @@ class SettingsActivity : Activity() {
     private fun buildUi() {
         box.removeAllViews()
 
-        box.addView(header("B2Y 弹幕 · 设置"))
+        box.addView(header("B2Y 弹幕 · 设置  v${com.b2y.danmaku.BuildConfig.VERSION_NAME}"))
         box.addView(note(
             "使用步骤：\n" +
                 "1. 在 Vector / LSPosed 中启用本模块，并把「YouTube」加入作用域（本模块已在清单中声明作用域）。\n" +
                 "2. 强制停止并重新打开 YouTube 客户端。\n" +
                 "3. 打开任意视频，弹幕会自动按标题匹配 B 站视频并加载。\n" +
                 "4. 播放页右下角悬浮「弹」按钮可以临时调整显示效果、重新搜索或手动粘贴 B 站链接。\n\n" +
-                "提示：这里保存的设置需要重新打开 YouTube 视频（或切换视频）后生效。"
+                "提示：这里保存的设置需要重新打开 YouTube 视频（或切换视频）后生效。\n" +
+                "「Shorts 里也匹配」关掉后，进入竖屏短视频流不再自动搜索，弹幕与悬浮按钮一并隐藏。"
         ))
 
         box.addView(header("基础"))
@@ -63,6 +64,9 @@ class SettingsActivity : Activity() {
         box.addView(check("显示悬浮「弹」按钮", current.showFloatButton) { current = current.copy(showFloatButton = it) })
         box.addView(check("优先使用 YouTube 原始标题（oEmbed，匹配更准）", current.preferOembedTitle) {
             current = current.copy(preferOembedTitle = it)
+        })
+        box.addView(check("Shorts（竖屏短视频）里也匹配并显示弹幕", current.matchInShorts) {
+            current = current.copy(matchInShorts = it)
         })
 
         box.addView(header("弹幕显示"))

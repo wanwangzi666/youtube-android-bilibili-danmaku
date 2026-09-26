@@ -27,6 +27,7 @@ object SettingsCodec {
         put("sessData", s.sessData)
         put("manualBvid", s.manualBvid)
         put("preferOembedTitle", s.preferOembedTitle)
+        put("matchInShorts", s.matchInShorts)
     }.toString()
 
     fun decode(json: String): DanmakuSettings {
@@ -51,7 +52,8 @@ object SettingsCodec {
             showTop = o.optBoolean("showTop", d.showTop),
             sessData = o.optString("sessData", d.sessData),
             manualBvid = o.optString("manualBvid", d.manualBvid),
-            preferOembedTitle = o.optBoolean("preferOembedTitle", d.preferOembedTitle)
+            preferOembedTitle = o.optBoolean("preferOembedTitle", d.preferOembedTitle),
+            matchInShorts = o.optBoolean("matchInShorts", d.matchInShorts)
         )
     }
 }

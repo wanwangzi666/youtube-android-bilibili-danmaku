@@ -24,6 +24,7 @@ object HookInstaller {
 
         safe("ActivityWatcher") { ActivityWatcher.install(cl) }
         safe("MediaSessionWatcher") { MediaSessionWatcher.install(cl) }
+        safe("ShortsDetector") { ShortsDetector.install(cl) }
         safe("VideoSurfaceTracker") { VideoSurfaceTracker.install(cl) }
         safe("PlayerFingerprintHook") { PlayerFingerprintHook.install(cl, lpparam.appInfo?.sourceDir, lpparam.appInfo?.splitSourceDirs) }
 

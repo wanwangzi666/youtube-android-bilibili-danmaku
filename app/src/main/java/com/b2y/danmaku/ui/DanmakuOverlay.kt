@@ -18,6 +18,7 @@ import com.b2y.danmaku.core.VideoSessionController
 import com.b2y.danmaku.danmaku.DanmakuItem
 import com.b2y.danmaku.danmaku.DanmakuView
 import com.b2y.danmaku.hook.PlaybackClockHolder
+import com.b2y.danmaku.hook.ShortsDetector
 import com.b2y.danmaku.hook.VideoSurfaceTracker
 
 /**
@@ -43,6 +44,12 @@ class DanmakuOverlay(private val activity: Activity) {
     private var timeOffsetMs: Int = 0
     private var statusProvider: () -> String = { "" }
     private var attached = false
+
+    /** 最近一次套用的设置（Shorts 判定 / 按钮显隐时要用） */
+    private var currentSettings: DanmakuSettings = DanmakuSettings()
+
+    /** 当前是否处于「Shorts 且已在设置里关掉 Shorts 匹配」的状态 */
+    private var shortsBlocked: Boolean = false
 
     private companion object {
         /** 画面消失超过该时长就隐藏弹幕层（离开播放页） */
@@ -145,9 +152,10 @@ class DanmakuOverlay(private val activity: Activity) {
     // ------------------------------------------------------------------ 数据接口
 
     fun applySettings(settings: DanmakuSettings) {
+        currentSettings = settings
         timeOffsetMs = settings.timeOffsetMs
         danmakuView?.setSettings(settings)
-        floatButton?.visibility = if (settings.showFloatButton) View.VISIBLE else View.GONE
+        updateFloatButtonVisibility()
     }
 
     fun setDanmaku(items: List<DanmakuItem>) {
@@ -192,6 +200,11 @@ class DanmakuOverlay(private val activity: Activity) {
         val view = danmakuView ?: return
         val rootView = root ?: return
         val surfaceRect = VideoSurfaceTracker.findVideoRectOnScreen(activity)
+
+        // Shorts 判定：进入竖屏短视频流且设置里关掉了「Shorts 也匹配」时，
+        // 整个弹幕层（弹幕 + 悬浮按钮）一起隐藏，避免短视频被低匹配度的结果打扰。
+        updateShortsState(surfaceRect)
+
         if (surfaceRect == null) {
             // 找不到画面（返回首页 / 退出播放页）：一段时间后隐藏整个弹幕层，
             // 既避免弹幕飘在首页信息流上，也省下逐帧重绘的开销。
@@ -255,6 +268,50 @@ class DanmakuOverlay(private val activity: Activity) {
         view.setVideoRect(null)
     }
 
+    // ------------------------------------------------------------------ Shorts
+
+    /**
+     * 更新「是否处于被屏蔽的 Shorts」状态，并同步弹幕与悬浮按钮的显隐。
+     *
+     * 只在状态发生变化时改动视图，避免每 250ms 反复触发可见性/重绘。
+     */
+    private fun updateShortsState(videoRect: Rect?) {
+        ShortsDetector.onVideoBounds(videoRect)
+        val blocked = !currentSettings.matchInShorts && ShortsDetector.isShortsActive(activity)
+        if (blocked == shortsBlocked) {
+            updateFloatButtonVisibility()
+            return
+        }
+        shortsBlocked = blocked
+        val view = danmakuView
+        if (view != null) {
+            if (blocked) {
+                view.setAutoInvalidate(false)
+                if (view.visibility == View.VISIBLE) view.visibility = View.GONE
+                Log.i("进入 Shorts：已暂停弹幕显示")
+            } else {
+                view.visibility = View.VISIBLE
+                view.setAutoInvalidate(true)
+                view.markNeedsResync()
+                Log.i("离开 Shorts：恢复弹幕显示")
+            }
+        }
+        updateFloatButtonVisibility()
+    }
+
+    /** 悬浮「弹」按钮：既要看设置开关，也要看当前是否处于被屏蔽的 Shorts */
+    private fun updateFloatButtonVisibility() {
+        val button = floatButton ?: return
+        val visible = currentSettings.showFloatButton && !shortsBlocked
+        val target = if (visible) View.VISIBLE else View.GONE
+        if (button.visibility != target) button.visibility = target
+    }
+
+    /** 供控制面板 / 诊断展示：当前是否因为 Shorts 而停用了弹幕 */
+    fun isShortsBlocked(): Boolean = shortsBlocked
+
+    fun shortsReason(): String = ShortsDetector.lastReason
+
     /** 在 [bounds] 内按 [aspect]（宽/高）居中裁出最大内接矩形 */
     private fun fitAspect(bounds: Rect, aspect: Float): Rect {
         val bw = bounds.width().toFloat()
@@ -298,6 +355,9 @@ class DanmakuOverlay(private val activity: Activity) {
             append('\n')
             append("弹幕：已载入 ").append(v?.engine?.loadedCount ?: 0)
                 .append("  在场 ").append(v?.activeCount ?: 0)
+            append('\n')
+            append("Shorts：").append(if (shortsBlocked) "已屏蔽弹幕" else "正常")
+                .append("（").append(ShortsDetector.lastReason).append("）")
             append('\n')
             append("设置：opacity=").append(VideoSessionController.settingsSnapshot().opacity)
                 .append(" fontSize=").append(VideoSessionController.settingsSnapshot().fontSizeSp)

@@ -12,6 +12,7 @@ import com.b2y.danmaku.bili.BiliSearchResult
 import com.b2y.danmaku.bili.DanmakuEntry
 import com.b2y.danmaku.danmaku.DanmakuItem
 import com.b2y.danmaku.hook.PlaybackClockHolder
+import com.b2y.danmaku.hook.ShortsDetector
 import com.b2y.danmaku.hook.VideoSurfaceTracker
 import com.b2y.danmaku.hook.fingerprint.PlayerFingerprintHook
 import com.b2y.danmaku.ui.DanmakuOverlay
@@ -170,6 +171,7 @@ object VideoSessionController {
             )
             return
         }
+        if (skipBecauseShorts()) return
         acceptVideoId(id)
     }
 
@@ -194,6 +196,32 @@ object VideoSessionController {
         return VideoSurfaceTracker.lastChosenAreaRatio >= WATCH_SCREEN_MIN_AREA_RATIO
     }
 
+    // ------------------------------------------------------------------ Shorts 屏蔽
+
+    /**
+     * 自动匹配的入口统一走这里：当「Shorts 也匹配」被关掉、且当前确实在 Shorts 播放器里时，
+     * 直接放弃本次自动搜索。
+     *
+     * 注意：**只拦自动流程**。控制面板里的「粘贴 B 站链接 / 搜索关键词 / 番剧模式」是用户
+     * 明确的手动意图，不做拦截。
+     */
+    private fun skipBecauseShorts(): Boolean {
+        if (settings.matchInShorts) return false
+        val act = activity
+        if (!ShortsDetector.isShortsActive(act)) return false
+        setStatus("当前是 Shorts，已按设置跳过弹幕匹配（可在悬浮面板中手动加载）")
+        Log.i("Shorts 已屏蔽自动匹配（${ShortsDetector.lastReason}）")
+        return true
+    }
+
+    /** 供控制面板展示：当前是否因为 Shorts 而停用了弹幕 */
+    fun isShortsBlocked(): Boolean {
+        val act = activity ?: return false
+        return !settings.matchInShorts && ShortsDetector.isShortsActive(act)
+    }
+
+    fun shortsReason(): String = ShortsDetector.lastReason
+
     private fun scheduleTitleOnlyResolve(title: String) {
         synchronized(pendingIdLock) {
             if (pendingTitle == title) return
@@ -208,6 +236,7 @@ object VideoSessionController {
         val t = synchronized(pendingIdLock) { pendingTitle } ?: return@Runnable
         if (videoId != null) return@Runnable
         if (!isOnWatchScreen()) return@Runnable
+        if (skipBecauseShorts()) return@Runnable
         statusText = "仅凭标题识别：$t"
         startTitleOnlyResolve(t)
     }
@@ -324,6 +353,7 @@ object VideoSessionController {
     // ------------------------------------------------------------------ 内部流程
 
     private fun startResolve(id: String, ov: DanmakuOverlay, force: Boolean = false) {
+        if (skipBecauseShorts()) return
         val gen = generation.incrementAndGet()
         if (force) lastResults = emptyList()
         setStatus("正在识别标题…")

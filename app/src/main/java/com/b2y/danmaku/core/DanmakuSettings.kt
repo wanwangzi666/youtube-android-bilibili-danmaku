@@ -47,7 +47,14 @@ data class DanmakuSettings(
     /** 手动指定的 B 站视频（bvid 或 av 号或完整链接），非空时优先使用 */
     val manualBvid: String = "",
     /** 是否信任 YouTube 的媒体会话元数据（部分版本标题为空） */
-    val preferOembedTitle: Boolean = true
+    val preferOembedTitle: Boolean = true,
+    /**
+     * 是否在 Shorts（竖屏短视频流）里也匹配并显示弹幕。
+     *
+     * 默认 true（保持老版本行为）。关掉后，进入 Shorts 时不会自动搜索 B 站视频，
+     * 已加载的弹幕与悬浮「弹」按钮也会一起隐藏，避免短视频被低匹配度的结果打扰。
+     */
+    val matchInShorts: Boolean = true
 ) {
     companion object {
         const val PREF_NAME = "b2y_settings"

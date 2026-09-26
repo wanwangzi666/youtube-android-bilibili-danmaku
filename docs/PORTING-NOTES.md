@@ -22,6 +22,7 @@
 | ✅ 广告片段弹幕剔除 | `removeAdSegments`（bsbsb.top / BilibiliSponsorBlock） | ⬜ | 需要额外请求第三方接口 + 时间轴重映射，留作后续 |
 | ✅ 手动输入 B 站链接 | Popup 输入框 | ✅ `BiliApi.parseBvid` + `ControlPanel` | 支持 bvid / av 号 / 完整链接 / 分享文本 |
 | ✅ 强制指定视频 | — | ✅ `DanmakuSettings.manualBvid` | 新增 |
+| ⬜ Shorts（竖屏短视频）跳过 | 上游网页版靠 `/shorts/` 路径 | ✅ `hook/ShortsDetector.kt` + `matchInShorts` | 新增：安卓端拿不到 URL，改用「Shorts 播放器类名 + 竖屏全屏几何」两层判定；关掉后自动匹配、弹幕显示与悬浮按钮一并停用 |
 
 ## 2. B 站接口
 

@@ -51,6 +51,12 @@ object VideoSurfaceTracker {
             if (refs.size > 64) refs.removeAt(0)
             refs.add(WeakReference(view))
         }
+        // 顺便让 ShortsDetector 知道这是不是 Shorts 播放器的视图
+        try {
+            ShortsDetector.registerView(view)
+        } catch (t: Throwable) {
+            Log.d("ShortsDetector.registerView 失败: ${t.message}")
+        }
     }
 
     private fun hookConstructors(className: String, classLoader: ClassLoader) {

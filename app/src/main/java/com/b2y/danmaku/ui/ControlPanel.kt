@@ -56,6 +56,11 @@ class ControlPanel(
         box.addView(statusView)
 
         box.addView(sectionTitle("识别与加载"))
+        box.addView(check("Shorts 也匹配弹幕", local.matchInShorts) { checked ->
+            local = local.copy(matchInShorts = checked)
+            apply()
+            refresh()
+        })
         box.addView(row(
             action("重新搜索") { VideoSessionController.retrySearch(); refresh() },
             action("搜索关键词") { askText("搜索 B 站视频", "输入关键词", "") { VideoSessionController.searchKeyword(it) } }
@@ -169,6 +174,11 @@ class ControlPanel(
             append("当前弹幕：").append(overlay.danmakuCount()).append(" 条\n")
             append("播放位置：").append(com.b2y.danmaku.hook.PlaybackClockHolder.clock.positionMs() / 1000)
                 .append(" s")
+            if (!local.matchInShorts) {
+                append('\n')
+                append("Shorts：").append(if (overlay.isShortsBlocked()) "已屏蔽弹幕" else "未检测到")
+                    .append("（").append(overlay.shortsReason()).append("）")
+            }
         }
         diagnosticsView?.text = overlay.diagnostics()
     }
@@ -225,6 +235,15 @@ class ControlPanel(
         isAllCaps = false
         setOnClickListener { onClick() }
     }
+
+    private fun check(label: String, checked: Boolean, onChange: (Boolean) -> Unit): android.widget.CheckBox =
+        android.widget.CheckBox(activity).apply {
+            text = label
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            isChecked = checked
+            setOnCheckedChangeListener { _, value -> onChange(value) }
+        }
 
     private fun slider(label: String, max: Int, progress: Int, onChanged: (Int) -> Unit): LinearLayout {
         val wrap = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }

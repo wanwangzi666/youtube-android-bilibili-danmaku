@@ -86,6 +86,33 @@ x        = stageWidth - progress * (stageWidth + textWidth)
 第 1 层保证「即使 YouTube 大版本更新导致指纹全部失效，模块依然能用」；第 2 层把同步精度和视频识别
 自动化提升到毫秒级；第 3 层保证任何情况下用户都能自己救回来。
 
+### Shorts（竖屏短视频）的处理
+
+上游扩展在网页版里天然能拿到 URL，`/shorts/` 路径一目了然；安卓端拿不到 URL，因此新增
+`hook/ShortsDetector.kt`，用两层信号判断「当前画面是不是 Shorts」：
+
+```
+第 1 层：Shorts 播放器视图
+    com.google.android.libraries.youtube.reel.internal.*   ← R8 保留原名（被字符串/资源引用）
+    → 惰性按类名解析一次 → 遍历当前 Activity 视图树找实例
+      （模块不额外 hook YouTube 内部类，避免解析全部方法带来的开销）
+
+第 2 层：竖屏全屏几何（兜底，完全不依赖 YouTube 实现）
+    视频画面 宽/高 < 0.9 且 宽、高都 ≥ 屏幕的 60%
+```
+
+判定结果带 3 秒保鲜期，避免视图瞬时回收导致状态来回抖动。设置项 `matchInShorts`（默认 `true`，
+保持老版本行为）关掉后：
+
+- `VideoSessionController.skipBecauseShorts()` 拦住**所有自动匹配入口**
+  （视频 ID 确认 / 纯标题确认 / `startResolve`），只更新状态文字，不发起搜索
+- `DanmakuOverlay` 把弹幕层与悬浮「弹」按钮一起隐藏
+- 播放页面板里的「粘贴 B 站链接 / 搜索关键词 / 番剧模式」**不受影响** —— 那是用户明确的手动意图
+
+`ShortsDetector.looksLikeShortsGeometry(...)` 的判定规则被抽成纯整数入参的函数，
+因此可以在 JVM 单测里完整覆盖（`ShortsDetectorTest`），另一条测试会在真实 APK 的 DEX 上
+确认那几个 `reel.internal.*` 类名确实被保留下来。
+
 ---
 
 ## 4. 时间轴同步

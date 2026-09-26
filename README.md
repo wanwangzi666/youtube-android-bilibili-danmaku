@@ -52,6 +52,7 @@ hook 播放器」这一层，使其能运行在 Vector / LSPosed 上。
 | 弹幕渲染 | 自绘 `View` + `Canvas`，轨道排布、滚动/顶部/底部、权重过滤、透明度/字号/速度/显示区域 |
 | 时间轴同步 | 播放位置来自 YouTube 内部时间指纹（毫秒级），回退方案是 Android `MediaSession` 外推；暂停/倍速/拖动天然同步 |
 | 手动干预 | 播放页悬浮「弹」按钮：重新搜索、搜索关键词、粘贴 B 站链接、番剧模式、时间轴微调、实时调参 |
+| Shorts 处理 | 自动识别 Shorts（竖屏短视频）播放器；可在设置或播放页面板里关掉「Shorts 也匹配」，关掉后进入 Shorts 不再搜索，弹幕与悬浮按钮一并隐藏 |
 | 番剧支持 | `《标题》第N话：` 形式的标题自动走 PGC 接口取该话弹幕 |
 
 ---
@@ -91,7 +92,8 @@ adb install -r app-debug.apk
    - **重新搜索 / 搜索关键词 / 粘贴 B 站链接 / 番剧模式**
    - **时间轴 ±0.5s** 微调（B 站与 YouTube 的正片起始点常常差几秒，甚至几分钟）
    - **不透明度 / 字号 / 速度 / 显示区域 / 权重过滤 / 开关**
-   - 面板里显示当前识别到的 `videoId`、标题、匹配到的 `bvid`、已加载弹幕条数、播放位置
+   - **Shorts 也匹配弹幕**（关掉后竖屏短视频流不再搜索、不显示弹幕与悬浮按钮）
+   - 面板里显示当前识别到的 `videoId`、标题、匹配到的 `bvid`、已加载弹幕条数、播放位置、Shorts 判定依据
 3. 需要长期保存的参数（Cookie、匹配阈值、自动加载、多结果策略…）在模块 App 里设置
 
 ### 关于匹配不准
@@ -116,7 +118,7 @@ export JAVA_HOME=/path/to/jdk17
 export ANDROID_HOME=/path/to/android-sdk
 
 ./gradlew :app:assembleDebug        # 产物 app/build/outputs/apk/debug/app-debug.apk
-./gradlew :app:testDebugUnitTest    # 96+ 个 JVM 单元测试
+./gradlew :app:testDebugUnitTest    # 118 个 JVM 单元测试
 ```
 
 Windows PowerShell 下（本仓库开发时使用的环境）：
@@ -145,6 +147,7 @@ app/src/main/java/com/b2y/danmaku/
 │   ├── HookInstaller.kt          统一安装入口
 │   ├── ActivityWatcher.kt        Application/Activity 生命周期 → 挂载浮层
 │   ├── MediaSessionWatcher.kt    MediaSession → 播放位置/倍速/元数据
+│   ├── ShortsDetector.kt         判断当前是否为 Shorts（Shorts 播放器类名 + 竖屏全屏几何）
 │   ├── VideoSurfaceTracker.kt    收集 SurfaceView/TextureView → 视频画面矩形
 │   └── fingerprint/
 │       ├── DexFile.kt            自研极简 DEX 解析器（类/方法/常量池/指令）
@@ -180,6 +183,11 @@ app/src/main/java/com/b2y/danmaku/
 | 弹幕位置整体偏移 | 用面板的时间轴 ±0.5s 微调，或设为长期偏移 |
 | 弹幕位置不跟手 | 说明 `MediaSession` 位置更新不足，查看日志是否有「播放时间指纹 hook 安装成功」 |
 | 匹配到错误的视频 | 调低阈值 + 改成「弹窗让我选择」，或用「强制指定 B 站视频」锁定 bvid |
+| 刷 Shorts 时总弹「选择要同步的 B 站视频」 | 在模块设置或播放页悬浮面板里关掉「Shorts 也匹配弹幕」；关掉后进入 Shorts 不再搜索，弹幕与悬浮按钮一并隐藏 |
+| 关掉了 Shorts 匹配，普通视频也被跳过 | Shorts 判定误判。打开悬浮面板看「Shorts：」那一行的判定依据（播放器视图 / 几何）并反馈该行文字 |
+| 某些 Shorts 没被识别成 Shorts | 已知盲区：超长屏（宽高比 ≥ 2.1）上看 9:16 的 Shorts 时，「适应宽度」后画面高度会掉到几何阈值以下。此时靠「Shorts 播放器视图」那层判定，日志里会出现「检测到 Shorts 播放器视图」 |
+| 刷 Shorts 时总是弹「选择要同步的 B 站视频」 | 在模块设置或播放页悬浮面板里关掉「Shorts 也匹配弹幕」；关掉后进入 Shorts 不再搜索，弹幕与悬浮按钮一并隐藏 |
+| 关掉了 Shorts 匹配，但普通视频也被跳过 | 说明 Shorts 判定误判。打开悬浮面板看「Shorts：」那一行的判定依据（视图 / 几何），并反馈该行文字 |
 
 日志过滤关键字：`B2Y`。
 
@@ -191,7 +199,7 @@ app/src/main/java/com/b2y/danmaku/
 
 ```
 app/src/main/java/com/b2y/danmaku/   # 模块源码
-app/src/test/java/com/b2y/danmaku/   # JVM 单元测试（106 个）
+app/src/test/java/com/b2y/danmaku/   # JVM 单元测试（118 个）
 docs/ARCHITECTURE.md                 # 架构与设计说明
 docs/PORTING-NOTES.md                # 与上游扩展的逐功能移植对照表
 THIRD_PARTY_NOTICES.md               # 第三方来源与许可清单
@@ -212,4 +220,22 @@ THIRD_PARTY_NOTICES.md               # 第三方来源与许可清单
 - 本项目仅用于技术学习与研究；弹幕版权归哔哩哔哩及原发布者所有，请勿用于商业用途
 - 请遵守哔哩哔哩与 YouTube 的服务条款；模块不存储、不转发任何用户数据，所有请求都在
   用户设备的 YouTube 进程内直接发出
+
+---
+
+## 更新日志
+
+### 1.1.0
+
+新增：
+
+- ✨ 新增 **Shorts（竖屏短视频）识别与跳过**：自动判断当前是否在 Shorts 播放器里
+  （Shorts 播放器类名 + 竖屏铺满几何两层判定），可在模块设置或播放页面板里关掉
+  「Shorts 也匹配弹幕」；关掉后进入 Shorts 不再搜索，弹幕与悬浮按钮一并隐藏
+- ✨ 播放页悬浮面板新增该开关（会话内即时生效），状态区显示 Shorts 判定依据，方便反馈误判
+
+### 1.0.0
+
+首个 Release：自动识别 YouTube 视频 → 按标题匹配 B 站视频 → 加载并渲染弹幕，
+支持番剧、时间轴偏移、手动粘贴 B 站链接、播放页控制面板与诊断信息。
 

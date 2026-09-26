@@ -277,7 +277,8 @@ class DanmakuOverlay(private val activity: Activity) {
      */
     private fun updateShortsState(videoRect: Rect?) {
         ShortsDetector.onVideoBounds(videoRect)
-        val blocked = !currentSettings.matchInShorts && ShortsDetector.isShortsActive(activity)
+        val blocked = !VideoSessionController.isMatchInShortsEnabled() &&
+            ShortsDetector.isShortsActive(activity)
         // 交给会话控制器收掉可能残留的「选择要同步的 B 站视频」弹窗
         try {
             VideoSessionController.onOverlayTick()
@@ -321,10 +322,10 @@ class DanmakuOverlay(private val activity: Activity) {
     /** 诊断用：把「判定结果」和「设置是否允许」两件事分开说清楚 */
     private fun shortsDiagnostics(): String {
         val detected = ShortsDetector.isShortsActive(activity)
-        val allowed = currentSettings.matchInShorts
+        val allowed = VideoSessionController.isMatchInShortsEnabled()
         return when {
-            detected && !allowed -> "已识别为 Shorts；设置=不匹配 → 已屏蔽。判定依据：${ShortsDetector.lastReason}"
-            detected && allowed -> "已识别为 Shorts，但设置=允许匹配（设置页里的「在 Shorts 里也匹配并显示弹幕」是勾选状态）"
+            detected && !allowed -> "已识别为 Shorts；开关=关闭 → 已屏蔽。判定依据：${ShortsDetector.lastReason}"
+            detected && allowed -> "已识别为 Shorts，但开关=开启（面板顶部的「Shorts 里也匹配弹幕」是勾选状态）"
             else -> "未识别为 Shorts。${ShortsDetector.lastReason}"
         }
     }

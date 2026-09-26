@@ -116,7 +116,121 @@ object Settings {
         return SettingsCodec.decode(json)
     }
 
+    // ---- 被注入进程侧的「Shorts 匹配」运行时开关 ----
+
+    /**
+     * 自己维护一个独立的 SharedPreferences 文件来存这个开关。
+     *
+     * 为什么不直接用 [saveLocal] 那份 JSON：那份是模块 App 进程写的，被注入进程只能通过
+     * [XSharedPreferences] 读，实测在部分 Vector / LSPosed / Android 版本组合下**读不到最新值**
+     * （用户反馈：设置页里取消了勾选，YouTube 进程里读到的一直是旧值）。
+     * 这个文件由被注入进程自己写、自己读，不依赖任何跨进程机制，因此一定同步。
+     */
+    private const val RUNTIME_PREF_NAME = "b2y_runtime"
+
+    private const val KEY_MATCH_IN_SHORTS = "match_in_shorts"
+
+    @Volatile
+    private var runtimeMatchInShorts: Boolean? = null
+
+    @Volatile
+    private var runtimeReadAtMs: Long = 0L
+
+    /** 运行时开关的重复读取间隔（浮层每 250ms 会问一次，这里挡一下） */
+    private const val RUNTIME_TTL_MS = 800L
+
+    /**
+     * 读取被注入进程自己的「Shorts 里也匹配」开关；没设置过返回 null。
+     *
+     * 带 [RUNTIME_TTL_MS] 的缓存：浮层每次刷新都会问，不能每次都去读文件。
+     */
+    fun loadRuntimeMatchInShorts(): Boolean? {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val cachedValue = runtimeMatchInShorts
+        if (cachedValue != null && now - runtimeReadAtMs < RUNTIME_TTL_MS) return cachedValue
+        val v = try {
+            val xsp = XSharedPreferences(RUNTIME_PREF_NAME)
+            xsp.reload()
+            if (xsp.contains(KEY_MATCH_IN_SHORTS)) xsp.getBoolean(KEY_MATCH_IN_SHORTS, false) else null
+        } catch (t: Throwable) {
+            Log.w("读取运行时 Shorts 开关失败", t)
+            cachedValue
+        }
+        runtimeMatchInShorts = v
+        runtimeReadAtMs = now
+        return v
+    }
+
+    /** 运行时开关是否已经被设置过（浮层开关或开机时同步过） */
+    fun runtimeMatchInShortsLoaded(): Boolean = runtimeMatchInShorts != null
+
+    /**
+     * 写入被注入进程自己的「Shorts 里也匹配」开关（浮层的全局开关用这个）。
+     *
+     * 只写这一份文件：模块 App 的读取入口 [loadLocalMatchInShorts] 会优先读它，
+     * 所以两个入口显示的状态天然一致，不需要（也不应该）去改模块 App 的那份 JSON ——
+     * 那条跨进程写入路径正是实测不可靠的地方。
+     */
+    fun saveRuntimeMatchInShorts(value: Boolean) {
+        runtimeMatchInShorts = value
+        runtimeReadAtMs = android.os.SystemClock.elapsedRealtime()
+        try {
+            val ctx = currentApplication()
+            if (ctx != null) {
+                ctx.getSharedPreferences(RUNTIME_PREF_NAME, Context.MODE_PRIVATE)
+                    .edit().putBoolean(KEY_MATCH_IN_SHORTS, value).commit()
+                Log.i("运行时 Shorts 开关已保存: $value")
+            } else {
+                Log.w("拿不到 Application，运行时 Shorts 开关只在本次进程内生效")
+            }
+        } catch (t: Throwable) {
+            Log.w("保存运行时 Shorts 开关失败", t)
+        }
+    }
+
+    /** 拿到宿主 App 的 Context（由 [de.robv.android.xposed.IXposedHookLoadPackage] 侧注入） */
+    private fun currentApplication(): Context? = applicationRef
+
+    @Volatile
+    private var applicationRef: Context? = null
+
+    fun attachApplication(context: Context) {
+        applicationRef = context
+    }
+
     // ---- 模块 App 进程侧 ----
+
+    /**
+     * 模块 App 侧读「Shorts 里也匹配」的最终生效值。
+     *
+     * 由于被注入进程会把浮层开关写进 [RUNTIME_PREF_NAME]，这里也读它 —— 这样两个入口
+     * 显示的状态一致，不会出现「设置页显示 A、实际生效 B」。
+     */
+    fun loadLocalMatchInShorts(context: Context, fallback: Boolean): Boolean =
+        try {
+            val sp = context.getSharedPreferences(RUNTIME_PREF_NAME, Context.MODE_PRIVATE)
+            if (sp.contains(KEY_MATCH_IN_SHORTS)) sp.getBoolean(KEY_MATCH_IN_SHORTS, fallback) else fallback
+        } catch (t: Throwable) {
+            fallback
+        }
+
+    /**
+     * 模块 App 侧写「Shorts 里也匹配」。
+     *
+     * 同时写两处：
+     * - JSON 配置（保持配置完整、备份用）
+     * - [RUNTIME_PREF_NAME]：被注入进程优先读这一份，**这次一定是同步的**，
+     *   因为它是同一个文件、同一个 app 的私有目录，不依赖任何跨进程机制
+     */
+    fun saveLocalMatchInShorts(context: Context, value: Boolean) {
+        try {
+            context.getSharedPreferences(RUNTIME_PREF_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_MATCH_IN_SHORTS, value).commit()
+            Log.i("模块设置侧已保存 Shorts 开关: $value")
+        } catch (t: Throwable) {
+            Log.w("保存 Shorts 开关失败", t)
+        }
+    }
 
     fun loadLocal(context: Context): DanmakuSettings {
         val sp = context.getSharedPreferences(DanmakuSettings.PREF_NAME, Context.MODE_PRIVATE)

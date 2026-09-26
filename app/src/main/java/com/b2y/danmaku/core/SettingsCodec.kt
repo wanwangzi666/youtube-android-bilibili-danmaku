@@ -41,6 +41,20 @@ object SettingsCodec {
      */
     const val DEFAULT_MATCH_IN_SHORTS = false
 
+    /**
+     * 「Shorts 里也匹配」的最终生效值。
+     *
+     * [runtimeOverride] 是**被注入进程自己维护的运行时开关**（播放页面板里的全局开关写的），
+     * 它优先于 [fromSettings]（模块 App 保存的 JSON 配置）。
+     *
+     * 为什么这样定优先级：用户实测反馈过，模块 App 里取消了勾选、YouTube 进程里通过
+     * `XSharedPreferences` 读到的却一直是旧值（诊断信息显示「设置=允许匹配」）。
+     * 运行时开关走的是被注入进程自己的 SharedPreferences 文件，不依赖跨进程机制，
+     * 因此一定能同步；把它的优先级放高，面板开关就必定生效。
+     */
+    fun resolveMatchInShorts(runtimeOverride: Boolean?, fromSettings: Boolean): Boolean =
+        runtimeOverride ?: fromSettings
+
     fun decode(json: String): DanmakuSettings {
         val o = JSONObject(json)
         val d = DanmakuSettings()

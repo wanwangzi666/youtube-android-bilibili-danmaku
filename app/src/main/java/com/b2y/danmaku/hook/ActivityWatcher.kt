@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Application
 import android.os.Bundle
 import com.b2y.danmaku.core.Log
+import com.b2y.danmaku.core.Settings
 import com.b2y.danmaku.core.VideoSessionController
 import com.b2y.danmaku.ui.DanmakuOverlay
 import de.robv.android.xposed.XC_MethodHook
@@ -33,6 +34,8 @@ object ActivityWatcher {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val app = param.thisObject as? Application ?: return
                     application = app
+                    // 让设置层能自己读写 SharedPreferences（浮层的全局开关要用）
+                    Settings.attachApplication(app)
                     try {
                         app.registerActivityLifecycleCallbacks(Callbacks)
                         Log.i("已注册 Activity 生命周期回调")

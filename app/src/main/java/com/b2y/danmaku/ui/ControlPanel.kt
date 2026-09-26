@@ -55,9 +55,20 @@ class ControlPanel(
         }
         box.addView(statusView)
 
+        box.addView(sectionTitle("Shorts（竖屏短视频）"))
+        // 全局开关：直接改会话控制器的运行时开关，不依赖跨进程设置读取
+        box.addView(check("在 Shorts 里也匹配弹幕", VideoSessionController.isMatchInShortsEnabled()) { checked ->
+            VideoSessionController.setMatchInShorts(checked)
+            refresh()
+        })
+        box.addView(TextView(activity).apply {
+            setTextColor(0xFFB0B0B0.toInt())
+            textSize = 11f
+            text = "全局生效，立即起作用（并会保存）。取消勾选后：进入 Shorts 不搜索、不显示弹幕，" +
+                "悬浮按钮也隐藏；下面的手动加载仍然可用。"
+        })
+
         box.addView(sectionTitle("识别与加载"))
-        // 这里不再放 Shorts 开关：同一个设置出现在两个地方容易互相打架，
-        // Shorts 的屏蔽统一由模块设置页的「Shorts（竖屏短视频）」一节控制，面板只显示当前状态。
         box.addView(row(
             action("重新搜索") { VideoSessionController.retrySearch(); refresh() },
             action("搜索关键词") { askText("搜索 B 站视频", "输入关键词", "") { VideoSessionController.searchKeyword(it) } }
@@ -232,6 +243,15 @@ class ControlPanel(
         isAllCaps = false
         setOnClickListener { onClick() }
     }
+
+    private fun check(label: String, checked: Boolean, onChange: (Boolean) -> Unit): android.widget.CheckBox =
+        android.widget.CheckBox(activity).apply {
+            text = label
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            isChecked = checked
+            setOnCheckedChangeListener { _, value -> onChange(value) }
+        }
 
     private fun slider(label: String, max: Int, progress: Int, onChanged: (Int) -> Unit): LinearLayout {
         val wrap = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }

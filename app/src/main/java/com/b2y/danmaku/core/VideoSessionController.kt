@@ -211,13 +211,56 @@ object VideoSessionController {
     private fun shortsCheckActivity(): android.app.Activity? = activity ?: ActivityWatcher.foregroundActivity()
 
     /**
-     * 当前是否应该屏蔽（Shorts 且设置里关掉了「Shorts 也匹配」）。
+     * 「Shorts 里也匹配弹幕」的**最终生效值**。
+     *
+     * 取值优先级：
+     * 1. **被注入进程自己维护的运行时开关**（浮层里的全局开关写的那个文件）—— 这条路径不经过
+     *    跨进程共享，实测最可靠；
+     * 2. 模块 App 保存的设置（经 [Settings.load] / XSharedPreferences 读到的
+     *    `matchInShorts`）—— 但如果跨进程读取失效，这里可能一直是旧值。
+     *
+     * 用户实测反馈过：设置页里取消勾选后 YouTube 进程读到的仍是旧值（诊断信息显示
+     * 「设置=允许匹配」）。所以运行时开关优先，浮层开关一开一关必定生效。
+     */
+    fun matchInShorts(): Boolean =
+        SettingsCodec.resolveMatchInShorts(Settings.loadRuntimeMatchInShorts(), settings.matchInShorts)
+
+    /** 供控制面板显示开关状态 */
+    fun isMatchInShortsEnabled(): Boolean = matchInShorts()
+
+    /**
+     * 浮层全局开关：立即生效，并落盘到被注入进程自己的 SharedPreferences
+     * （同时尽量写回模块设置，保持两边显示一致）。
+     *
+     * @return 生效后的值
+     */
+    fun setMatchInShorts(value: Boolean): Boolean {
+        Settings.saveRuntimeMatchInShorts(value)
+        settings = settings.copy(matchInShorts = value)
+        Log.i("Shorts 匹配开关已设为 $value（全局，立即生效）")
+        val ov = overlay
+        if (ov != null) {
+            val s = settings
+            main.post { ov.applySettings(s) }
+        }
+        if (value) {
+            setStatus("已开启：Shorts 里也会匹配并显示弹幕")
+        } else {
+            setStatus("已关闭：Shorts 里不再匹配弹幕")
+            // 关掉时立刻收掉现场：弹窗 + 已加载的弹幕
+            if (isShortsBlockedNow()) dismissShortsBlockedUi()
+        }
+        return value
+    }
+
+    /**
+     * 当前是否应该屏蔽（Shorts 且「Shorts 也匹配」是关的）。
      *
      * 额外要求「确实在看播放页」（[isOnWatchScreen]）：这层保护是为了避免首页信息流里的
      * 竖屏预览、或上一个播放页残留的画面尺寸被误判成 Shorts，从而把正常视频的弹幕也停掉。
      */
     private fun isShortsBlockedNow(): Boolean {
-        if (settings.matchInShorts) return false
+        if (matchInShorts()) return false
         if (!isOnWatchScreen()) return false
         return ShortsDetector.isShortsActive(shortsCheckActivity())
     }
@@ -609,7 +652,7 @@ object VideoSessionController {
 
     /** 浮层刷新时调用：如果已经滑进 Shorts，把残留的选择弹窗收掉 */
     fun onOverlayTick() {
-        if (settings.matchInShorts) return
+        if (matchInShorts()) return
         if (chooserDialog == null) return
         if (isShortsBlockedNow()) {
             Log.i("浮层轮询发现已进入 Shorts，关闭选择弹窗")

@@ -31,6 +31,11 @@ class SettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         current = Settings.loadLocal(this)
+        // Shorts 开关以「被注入进程自己维护的运行时值」为准（如果设置过），
+        // 这样设置页显示的状态和 YouTube 里实际生效的完全一致
+        current = current.copy(
+            matchInShorts = Settings.loadLocalMatchInShorts(this, current.matchInShorts)
+        )
 
         val scroll = ScrollView(this)
         box = LinearLayout(this).apply {
@@ -72,7 +77,8 @@ class SettingsActivity : Activity() {
         box.addView(note(
             "不勾选（默认）：识别到 Shorts 时，不搜索、不显示弹幕，悬浮「弹」按钮也隐藏。\n" +
                 "勾选：Shorts 照常按标题匹配 B 站视频，行为和 1.0.0 一样。\n\n" +
-                "两种情况都可以在播放页悬浮面板里用「粘贴 B 站链接」手动加载弹幕。"
+                "这里改完要点下面的「保存设置」，然后在 YouTube 里切换一次视频生效。\n" +
+                "想立刻生效：播放页悬浮「弹」按钮 → 面板最上方的同名开关（立即生效，无需重启）。"
         ))
 
         box.addView(header("弹幕显示"))
@@ -123,7 +129,13 @@ class SettingsActivity : Activity() {
             isAllCaps = false
             setOnClickListener {
                 Settings.saveLocal(this@SettingsActivity, current)
-                Toast.makeText(this@SettingsActivity, "已保存。请在 YouTube 中切换一次视频。", Toast.LENGTH_LONG).show()
+                // Shorts 开关额外写一份被注入进程一定会读到的副本
+                Settings.saveLocalMatchInShorts(this@SettingsActivity, current.matchInShorts)
+                Toast.makeText(
+                    this@SettingsActivity,
+                    "已保存。请在 YouTube 中切换一次视频。",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
         box.addView(save, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))

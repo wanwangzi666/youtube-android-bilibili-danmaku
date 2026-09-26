@@ -89,4 +89,19 @@ class SettingsCodecTest {
         assertFalse(SettingsCodec.DEFAULT_MATCH_IN_SHORTS)
         assertFalse(SettingsCodec.decode("{}").matchInShorts)
     }
+
+    // ------------------------------------------------------------------ 生效值优先级
+
+    @Test
+    fun `没有运行时开关时使用设置文件的值`() {
+        assertTrue(SettingsCodec.resolveMatchInShorts(null, fromSettings = true))
+        assertFalse(SettingsCodec.resolveMatchInShorts(null, fromSettings = false))
+    }
+
+    @Test
+    fun `运行时开关优先于设置文件`() {
+        // 用户实测的坑：设置文件里是 true（跨进程读到旧值），但面板开关已经关掉了
+        assertFalse(SettingsCodec.resolveMatchInShorts(runtimeOverride = false, fromSettings = true))
+        assertTrue(SettingsCodec.resolveMatchInShorts(runtimeOverride = true, fromSettings = false))
+    }
 }

@@ -48,14 +48,13 @@ class SettingsActivity : Activity() {
         box.removeAllViews()
 
         box.addView(header("B2Y 弹幕 · 设置  v${com.b2y.danmaku.BuildConfig.VERSION_NAME}"))
+        box.addView(header("使用说明"))
         box.addView(note(
-            "使用步骤：\n" +
-                "1. 在 Vector / LSPosed 中启用本模块，并把「YouTube」加入作用域（本模块已在清单中声明作用域）。\n" +
+            "1. 在 Vector / LSPosed 中启用本模块，并把「YouTube」加入作用域（本模块已在清单中声明作用域）。\n" +
                 "2. 强制停止并重新打开 YouTube 客户端。\n" +
                 "3. 打开任意视频，弹幕会自动按标题匹配 B 站视频并加载。\n" +
                 "4. 播放页右下角悬浮「弹」按钮可以临时调整显示效果、重新搜索或手动粘贴 B 站链接。\n\n" +
-                "提示：这里保存的设置需要重新打开 YouTube 视频（或切换视频）后生效。\n" +
-                "「Shorts 里也匹配」默认不勾选：竖屏短视频流里不会自动搜索，弹幕与悬浮按钮一并隐藏。"
+                "保存后的设置在重新打开视频（或切换视频）后生效。"
         ))
 
         box.addView(header("基础"))
@@ -65,14 +64,15 @@ class SettingsActivity : Activity() {
         box.addView(check("优先使用 YouTube 原始标题（oEmbed，匹配更准）", current.preferOembedTitle) {
             current = current.copy(preferOembedTitle = it)
         })
-        box.addView(check("Shorts（竖屏短视频）里也匹配并显示弹幕（默认关闭）", current.matchInShorts) {
+
+        box.addView(header("Shorts（竖屏短视频）"))
+        box.addView(check("在 Shorts 里也匹配并显示弹幕", current.matchInShorts) {
             current = current.copy(matchInShorts = it)
         })
         box.addView(note(
-            "上面这一项：默认**不勾选** —— 也就是刷 Shorts 时不搜索、不显示弹幕，" +
-                "悬浮「弹」按钮也会一起隐藏。\n" +
-                "勾上则恢复成「Shorts 也按标题匹配 B 站视频」的旧行为。\n" +
-                "无论是否勾选，播放页面板里的「粘贴 B 站链接 / 搜索关键词 / 番剧模式」都能手动加载弹幕。"
+            "不勾选（默认）：识别到 Shorts 时，不搜索、不显示弹幕，悬浮「弹」按钮也隐藏。\n" +
+                "勾选：Shorts 照常按标题匹配 B 站视频，行为和 1.0.0 一样。\n\n" +
+                "两种情况都可以在播放页悬浮面板里用「粘贴 B 站链接」手动加载弹幕。"
         ))
 
         box.addView(header("弹幕显示"))

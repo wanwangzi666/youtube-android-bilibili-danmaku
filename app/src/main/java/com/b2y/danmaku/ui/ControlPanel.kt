@@ -56,18 +56,8 @@ class ControlPanel(
         box.addView(statusView)
 
         box.addView(sectionTitle("识别与加载"))
-        // 放在最顶上：刷 Shorts 被弹窗打扰时，用户第一个想找的就是它
-        box.addView(check("在 Shorts（竖屏短视频）里也匹配弹幕", local.matchInShorts) { checked ->
-            local = local.copy(matchInShorts = checked)
-            apply()
-            refresh()
-        })
-        box.addView(TextView(activity).apply {
-            setTextColor(0xFFB0B0B0.toInt())
-            textSize = 11f
-            text = "取消勾选（默认）后：进入 Shorts 不再自动搜索，弹幕与悬浮按钮都会隐藏；" +
-                "下面的「粘贴 B 站链接 / 搜索关键词 / 番剧模式」仍可手动加载。"
-        })
+        // 这里不再放 Shorts 开关：同一个设置出现在两个地方容易互相打架，
+        // Shorts 的屏蔽统一由模块设置页的「Shorts（竖屏短视频）」一节控制，面板只显示当前状态。
         box.addView(row(
             action("重新搜索") { VideoSessionController.retrySearch(); refresh() },
             action("搜索关键词") { askText("搜索 B 站视频", "输入关键词", "") { VideoSessionController.searchKeyword(it) } }
@@ -242,15 +232,6 @@ class ControlPanel(
         isAllCaps = false
         setOnClickListener { onClick() }
     }
-
-    private fun check(label: String, checked: Boolean, onChange: (Boolean) -> Unit): android.widget.CheckBox =
-        android.widget.CheckBox(activity).apply {
-            text = label
-            textSize = 12f
-            setTextColor(Color.WHITE)
-            isChecked = checked
-            setOnCheckedChangeListener { _, value -> onChange(value) }
-        }
 
     private fun slider(label: String, max: Int, progress: Int, onChanged: (Int) -> Unit): LinearLayout {
         val wrap = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }

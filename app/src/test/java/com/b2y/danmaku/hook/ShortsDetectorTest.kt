@@ -111,6 +111,75 @@ class ShortsDetectorTest {
         )
     }
 
+    // ------------------------------------------------------------------ 底部导航标签判定
+
+    private val screenH = 2340
+
+    private fun label(text: String?, centerY: Int, selected: Boolean) =
+        ShortsDetector.ShortsTabCandidate(text, centerY, selected)
+
+    /** 底部导航栏大致在 y≈2250 的位置 */
+    private fun tabSelected(vararg candidates: ShortsDetector.ShortsTabCandidate) =
+        ShortsDetector.isShortsTabSelected(candidates.toList(), 0, screenH)
+
+    @Test
+    fun `底部选中的 Shorts 标签被识别`() {
+        assertTrue(tabSelected(label("Shorts", 2250, selected = true)))
+    }
+
+    @Test
+    fun `文字大小写与首尾空格都能匹配`() {
+        assertTrue(tabSelected(label("  shorts ", 2250, selected = true)))
+        assertTrue(tabSelected(label("SHORTS", 2250, selected = true)))
+    }
+
+    @Test
+    fun `未选中的 Shorts 标签不算`() {
+        assertFalse(tabSelected(label("Shorts", 2250, selected = false)))
+    }
+
+    @Test
+    fun `标题里的 shorts 不算（位置在上半屏）`() {
+        // 例如「俩哥特熏肉模拟开店 #shorts #vlog #food」这样的标题
+        assertFalse(tabSelected(label("Shorts", 300, selected = true)))
+    }
+
+    @Test
+    fun `文字不完全等于 Shorts 不算`() {
+        // 标题里带 hashtag 的完整文字不应该被当成底部导航标签
+        assertFalse(tabSelected(label("俩哥特熏肉模拟开店 #shorts #food", 2250, selected = true)))
+        assertFalse(tabSelected(label("More Shorts", 2250, selected = true)))
+    }
+
+    @Test
+    fun `其它标签选中不算`() {
+        // 首页 / 订阅 / 我 这些标签也是选中的时候
+        assertFalse(
+            tabSelected(
+                label("首页", 2250, selected = false),
+                label("Shorts", 2250, selected = false),
+                label("订阅", 2250, selected = true),
+                label("我", 2250, selected = false)
+            )
+        )
+    }
+
+    @Test
+    fun `多个候选里只要底部的 Shorts 选中就算`() {
+        assertTrue(
+            tabSelected(
+                label("Shorts", 300, selected = false), // 标题里的
+                label("Shorts", 2250, selected = true)  // 底部导航的
+            )
+        )
+    }
+
+    @Test
+    fun `空候选或屏幕高度非法时不算`() {
+        assertFalse(ShortsDetector.isShortsTabSelected(emptyList(), 0, screenH))
+        assertFalse(ShortsDetector.isShortsTabSelected(listOf(label("Shorts", 100, true)), 0, 0))
+    }
+
     // ------------------------------------------------------------------ 类名判定
 
     @Test

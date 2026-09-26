@@ -59,6 +59,8 @@ object ActivityWatcher {
                     return
                 }
                 resumedActivity = activity
+                // 换了界面，底部导航的 Shorts 标签状态缓存要作废
+                ShortsDetector.invalidateTabCache()
                 val overlay = overlays.getOrPut(activity) {
                     DanmakuOverlay(activity).also {
                         it.attach()

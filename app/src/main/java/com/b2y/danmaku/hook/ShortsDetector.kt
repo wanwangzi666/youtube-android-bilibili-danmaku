@@ -3,25 +3,29 @@ package com.b2y.danmaku.hook
 import android.app.Activity
 import android.graphics.Rect
 import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
 import com.b2y.danmaku.core.Log
 import java.lang.ref.WeakReference
 import java.util.Collections
 
 /**
- * 判断「当前画面是不是 Shorts（竖屏短视频流）」。
+ * 判断「当前是不是 YouTube 的 Shorts 短视频」。
  *
- * 为什么要判断：Shorts 是**全屏循环**播放的竖屏视频，标题通常是外文短句，B 站几乎没有对应
- * 内容；此时按标题搜索只会得到 0~25% 的匹配度，弹出「选择要同步的 B 站视频」纯属打扰。
+ * 为什么要判断：Shorts 的标题通常是外文短句或带一堆 hashtag，B 站几乎没有对应内容；
+ * 按标题搜索只会得到 0~25% 的匹配度，弹出「选择要同步的 B 站视频」纯属打扰。
  *
- * 判断依据（任一命中即认为在 Shorts）：
+ * 判断依据（任一层命中即算 Shorts，具体顺序见 [isShortsActive]）：
  *
- * 1. **播放器视图**（首选）：Shorts 播放器会用到 `com.google.android.libraries.youtube.reel.internal.*`
- *    里的几个类。这些类是 R8 的 **-keep** 目标（类名在 YouTube 21.38.124 的 DEX 里完好保留，
- *    说明它们被字符串/资源引用而无法被重命名），因此可以直接按类名在自己的 classLoader 里解析，
- *    不需要再走 DEX 指纹。模块不主动 hook 它们（避免解析全部方法带来的开销），只是在判断时
- *    按需解析一次，再遍历当前 Activity 的视图树找实例。
- * 2. **竖屏铺满几何**（兜底）：视频画面是竖屏且纵向几乎铺满屏幕 —— 这一层完全不依赖 YouTube
- *    内部实现，只在第 1 层失效时兜底，具体阈值与盲区见 [MIN_SCREEN_HEIGHT_RATIO]。
+ * 1. **Shorts 播放器视图**：`com.google.android.libraries.youtube.reel.internal.*` 里的几个类。
+ *    它们是 R8 的 **-keep** 目标（类名在 YouTube 21.38.124 的 DEX 里完好保留），所以可以直接
+ *    按类名在自己的 classLoader 里解析。模块不主动 hook 它们，只在判断时按需解析一次，
+ *    再遍历视图树找实例。
+ * 2. **底部导航「Shorts」标签选中**：用户实测最可靠的一条信号 —— Shorts 页（含全屏短视频
+ *    播放器）底部导航的 Shorts 图标是高亮的。只用文字遍历框架视图树实现，不 hook YouTube
+ *    内部类。为避免「从 Shorts 页点开普通视频」这类误判，还要求画面是竖屏。
+ * 3. **竖屏铺满几何**：纯画面尺寸判定，完全不依赖 YouTube 实现，阈值见
+ *    [MIN_SCREEN_HEIGHT_RATIO]。
  *
  * 判定结果带有 [DECAY_MS] 的保鲜期：短时间（退出播放器、视图瞬时回收）内不会因为一次探测失败
  * 就来回抖动。
@@ -38,6 +42,19 @@ object ShortsDetector {
 
     /** 判定结果的保鲜时长（毫秒） */
     private const val DECAY_MS = 3000L
+
+    /** 底部导航「Shorts」标签的文字（各语言下都是 "Shorts"） */
+    private const val SHORTS_LABEL = "Shorts"
+
+    /** 扫描视图树找标签的最小间隔（遍历整棵树不便宜） */
+    private const val TAB_SCAN_INTERVAL_MS = 1200L
+
+    /** 只认屏幕这个比例以下的标签，避免标题里的 "shorts" 被误判成底部导航 */
+    private const val TAB_BOTTOM_REGION_RATIO = 0.5f
+
+    /** 判断选中态时向上/向下查找的最大层数 */
+    private const val MAX_TAB_ANCESTOR_DEPTH = 6
+    private const val MAX_TAB_DESCENDANT_DEPTH = 3
 
     /** 竖屏判定容忍度：宽/高 必须小于该值才算竖屏 */
     private const val PORTRAIT_MAX_ASPECT = 0.9f
@@ -122,24 +139,44 @@ object ShortsDetector {
     // ------------------------------------------------------------------ 判断
 
     /**
-     * 当前是否在 Shorts 播放器里。
+     * 当前是否在 YouTube 的 Shorts 短视频里。
      *
      * 只应在**主线程**调用（会遍历视图树）。
+     *
+     * 三层依据，任一成立即算 Shorts：
+     *
+     * 1. **Shorts 播放器视图在线** —— 最直接，但依赖那几个 `reel.internal.*` 类名没被混淆；
+     * 2. **底部导航的「Shorts」标签处于选中态** —— 用户实测反馈里最稳的一条：Shorts 页面
+     *    （包括全屏短视频播放器）底部导航栏的 Shorts 图标是高亮的。单独用它会有误判风险
+     *    （例如从 Shorts 页点开一个普通视频），所以还要「画面是竖屏」这一条配合；
+     * 3. **竖屏铺满几何** —— 完全基于画面尺寸的兜底。
      */
     fun isShortsActive(activity: Activity?): Boolean {
         val now = android.os.SystemClock.elapsedRealtime()
+        val screen = screenBounds(activity)
+        val bounds = resolveVideoBounds(activity)
 
-        // 1) 播放器视图：Shorts 播放器视图还在当前视图树里
+        // 形状信号：竖屏画面（宽/高 < 0.9），三种依据都用得上
+        val portrait = isPortrait(bounds)
+        val fillsScreen = fillsScreen(bounds, screen)
+
+        // 1) Shorts 播放器视图在线
         if (now - lastShortsRealtimeMs <= DECAY_MS && hasLiveShortsView(activity)) {
             lastShortsRealtimeMs = now
             lastReason = "Shorts 播放器视图在线"
             return true
         }
 
-        // 2) 竖屏铺满几何
-        val screen = screenBounds(activity)
-        val bounds = resolveVideoBounds(activity)
-        if (looksLikeShortsGeometry(bounds, screen)) {
+        // 2) 底部导航「Shorts」标签选中 + 竖屏画面
+        val tabSelected = isShortsTabSelected(activity, screen)
+        if (tabSelected && portrait) {
+            lastShortsRealtimeMs = now
+            lastReason = "底部「Shorts」标签选中 + 竖屏画面（${bounds?.width()}×${bounds?.height()}）"
+            return true
+        }
+
+        // 3) 竖屏铺满几何
+        if (portrait && fillsScreen) {
             lastShortsRealtimeMs = now
             val b = bounds!!
             lastReason =
@@ -149,7 +186,115 @@ object ShortsDetector {
 
         if (now - lastShortsRealtimeMs > DECAY_MS) {
             lastReason = "非 Shorts（画面 ${bounds?.width() ?: -1}×${bounds?.height() ?: -1} / " +
-                "屏幕 ${screen.width()}×${screen.height()}，无 Shorts 播放器视图）"
+                "屏幕 ${screen.width()}×${screen.height()}；Shorts 标签" +
+                (if (tabSelected) "选中但画面非竖屏" else "未选中") +
+                "；无 Shorts 播放器视图）"
+        }
+        return false
+    }
+
+    private fun isPortrait(bounds: Rect?): Boolean {
+        if (bounds == null) return false
+        val w = bounds.width()
+        val h = bounds.height()
+        if (w <= 0 || h <= 0) return false
+        return w.toFloat() / h.toFloat() < PORTRAIT_MAX_ASPECT
+    }
+
+    private fun fillsScreen(bounds: Rect?, screen: Rect): Boolean {
+        if (bounds == null) return false
+        val w = bounds.width()
+        val h = bounds.height()
+        if (w <= 0 || h <= 0 || screen.width() <= 0 || screen.height() <= 0) return false
+        return h >= screen.height() * MIN_SCREEN_HEIGHT_RATIO &&
+            w >= screen.width() * MIN_SCREEN_WIDTH_RATIO
+    }
+
+    // ------------------------------------------------------------------ 底部导航判定
+
+    /** 上次遍历视图树找「Shorts」标签的时刻 */
+    private var lastTabScanMs: Long = 0L
+
+    /** 缓存的扫描结果 */
+    private var cachedTabSelected: Boolean = false
+
+    /** 每次进入新界面时调用，让缓存的标签状态失效 */
+    fun invalidateTabCache() {
+        lastTabScanMs = 0L
+        cachedTabSelected = false
+    }
+
+    /**
+     * 底部导航栏里的「Shorts」标签是否处于选中态。
+     *
+     * 实现方式刻意保持"版本无关"：不 hook YouTube 的任何内部类，只用框架 API
+     * [android.view.ViewGroup.findViewsWithText] 按可见文字找标签，再判断
+     * 它自身或它的祖先是否被标记为 selected，以及它是否位于屏幕下半部分
+     * （这样不会把标题/描述里的 "shorts" 误当成标签）。
+     *
+     * 遍历整棵视图树不便宜，所以结果缓存 [TAB_SCAN_INTERVAL_MS]。
+     */
+    private fun isShortsTabSelected(activity: Activity?, screen: Rect): Boolean {
+        val act = activity ?: return false
+        val decor = act.window?.decorView as? ViewGroup ?: return false
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastTabScanMs < TAB_SCAN_INTERVAL_MS) return cachedTabSelected
+        lastTabScanMs = now
+
+        val selected = try {
+            scanShortsTab(decor, screen)
+        } catch (t: Throwable) {
+            Log.d("扫描 Shorts 标签失败: ${t.message}")
+            false
+        }
+        cachedTabSelected = selected
+        return selected
+    }
+
+    private fun scanShortsTab(decor: ViewGroup, screen: Rect): Boolean {
+        val found = ArrayList<View>()
+        // 先按可见文字找（底部导航通常有 "Shorts" 文字标签）
+        decor.findViewsWithText(found, SHORTS_LABEL, View.FIND_VIEWS_WITH_TEXT)
+        if (found.isEmpty()) {
+            // 有些版本只有图标，文字靠 contentDescription 提供
+            decor.findViewsWithText(found, SHORTS_LABEL, View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
+        }
+        if (found.isEmpty()) return false
+
+        val tmp = Rect()
+        val candidates = ArrayList<ShortsTabCandidate>(found.size)
+        for (label in found) {
+            if (!label.isShown) continue
+            if (!label.getGlobalVisibleRect(tmp)) continue
+            val labelText = (label as? TextView)?.text?.toString()
+                ?: label.contentDescription?.toString()
+            val selected = label.isSelected ||
+                hasSelectedAncestor(label, decor, MAX_TAB_ANCESTOR_DEPTH) ||
+                // 有些实现把选中态放在标签的兄弟节点（图标）上
+                (label.parent as? ViewGroup)
+                    ?.let { hasSelectedDescendant(it, MAX_TAB_DESCENDANT_DEPTH) } == true
+            candidates.add(ShortsTabCandidate(labelText, tmp.centerY(), selected))
+        }
+        return isShortsTabSelected(candidates, screen.top, screen.height())
+    }
+
+    private fun hasSelectedAncestor(view: View, decor: View, maxDepth: Int): Boolean {
+        var cur: View? = view.parent as? View
+        var depth = 0
+        while (cur != null && depth++ < maxDepth) {
+            if (cur.isSelected) return true
+            if (cur === decor) return false
+            cur = cur.parent as? View
+        }
+        return false
+    }
+
+    private fun hasSelectedDescendant(group: ViewGroup, maxDepth: Int): Boolean {
+        if (maxDepth <= 0) return false
+        for (i in 0 until group.childCount) {
+            val child = group.getChildAt(i) ?: continue
+            if (child.isSelected) return true
+            if (child is ViewGroup && hasSelectedDescendant(child, maxDepth - 1)) return true
         }
         return false
     }
@@ -231,6 +376,35 @@ object ShortsDetector {
     }
 
     // ------------------------------------------------------------------ 纯函数（可单元测试）
+
+    /**
+     * 一个候选的「Shorts」标签（从视图树里扫出来的）。
+     *
+     * @param text 标签文字（可为 null，此时按内容描述扫到的）
+     * @param centerY 标签在屏幕坐标里的垂直中心
+     * @param selected 标签自身 / 祖先 / 兄弟节点是否被标记为选中
+     */
+    data class ShortsTabCandidate(val text: String?, val centerY: Int, val selected: Boolean)
+
+    /**
+     * 底部导航「Shorts」标签是否处于选中态（纯函数，便于单测）。
+     *
+     * 判定规则：**文字是 "Shorts"（忽略大小写与首尾空格）** + **位于屏幕下半部分** + **选中**。
+     * 中间那条是为了排除视频标题 / 描述里出现的 "shorts" 字样。
+     */
+    fun isShortsTabSelected(
+        candidates: List<ShortsTabCandidate>,
+        screenTop: Int,
+        screenHeight: Int
+    ): Boolean {
+        if (screenHeight <= 0) return false
+        val regionStart = screenTop + screenHeight * TAB_BOTTOM_REGION_RATIO
+        return candidates.any { c ->
+            c.selected &&
+                c.centerY >= regionStart &&
+                c.text?.trim()?.equals(SHORTS_LABEL, ignoreCase = true) == true
+        }
+    }
 
     /**
      * Shorts 播放器相关的候选类名（对外暴露，便于单测在真实 APK 的 DEX 上验证这些名字

@@ -318,6 +318,17 @@ class DanmakuOverlay(private val activity: Activity) {
 
     fun shortsReason(): String = ShortsDetector.lastReason
 
+    /** 诊断用：把「判定结果」和「设置是否允许」两件事分开说清楚 */
+    private fun shortsDiagnostics(): String {
+        val detected = ShortsDetector.isShortsActive(activity)
+        val allowed = currentSettings.matchInShorts
+        return when {
+            detected && !allowed -> "已识别为 Shorts；设置=不匹配 → 已屏蔽。判定依据：${ShortsDetector.lastReason}"
+            detected && allowed -> "已识别为 Shorts，但设置=允许匹配（设置页里的「在 Shorts 里也匹配并显示弹幕」是勾选状态）"
+            else -> "未识别为 Shorts。${ShortsDetector.lastReason}"
+        }
+    }
+
     /** 在 [bounds] 内按 [aspect]（宽/高）居中裁出最大内接矩形 */
     private fun fitAspect(bounds: Rect, aspect: Float): Rect {
         val bw = bounds.width().toFloat()
@@ -362,8 +373,8 @@ class DanmakuOverlay(private val activity: Activity) {
             append("弹幕：已载入 ").append(v?.engine?.loadedCount ?: 0)
                 .append("  在场 ").append(v?.activeCount ?: 0)
             append('\n')
-            append("Shorts：").append(if (shortsBlocked) "已屏蔽弹幕" else "正常")
-                .append("（").append(ShortsDetector.lastReason).append("）")
+            append("Shorts：").append(if (shortsBlocked) "已屏蔽弹幕" else "正常显示")
+                .append("（").append(shortsDiagnostics()).append("）")
             append('\n')
             append("设置：opacity=").append(VideoSessionController.settingsSnapshot().opacity)
                 .append(" fontSize=").append(VideoSessionController.settingsSnapshot().fontSizeSp)

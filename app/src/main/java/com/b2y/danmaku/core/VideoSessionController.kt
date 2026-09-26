@@ -186,6 +186,8 @@ object VideoSessionController {
         videoId = id
         currentBvid = null
         lastResults = emptyList()
+        // 换了视频，Shorts 标签状态缓存作废（上下滑切换短视频时 Activity 不会重建）
+        ShortsDetector.invalidateTabCache()
         Log.i("确认当前 YouTube 视频: $id")
         statusText = "已识别视频：$id"
         val ov = overlay ?: return
@@ -540,6 +542,14 @@ object VideoSessionController {
             currentBvid = bvid
             main.post {
                 if (gen != generation.get()) return@post
+                // 最后一道闸：下载期间可能已经滑进 Shorts 了，这时候不能把弹幕贴上去
+                if (isShortsBlockedNow()) {
+                    Log.i("弹幕下载完成时已在 Shorts，丢弃本次结果（${ShortsDetector.lastReason}）")
+                    ov.clearDanmaku()
+                    currentBvid = null
+                    setStatus("当前是 Shorts，已丢弃刚下载的弹幕")
+                    return@post
+                }
                 ov.setDanmaku(items)
                 clock.reset()
                 ov.showToast("B2Y: ${info.title}（${items.size} 条弹幕）")

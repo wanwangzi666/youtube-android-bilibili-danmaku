@@ -109,9 +109,14 @@ object ShortsDetector {
         Log.i("检测到 Shorts 播放器视图：${view.javaClass.name}")
     }
 
-    /** 浮层每轮刷新时把当前视频画面喂进来，供几何兜底判断使用 */
+    /** 浮层每轮刷新时把当前视频画面喂进来，供几何判定使用 */
     fun onVideoBounds(bounds: Rect?) {
         lastVideoBounds = bounds?.let { Rect(it) }
+    }
+
+    /** 清除「最近一次判定为 Shorts」的保鲜标记（例如确认离开 Shorts 播放器时） */
+    fun reset() {
+        lastShortsRealtimeMs = 0L
     }
 
     // ------------------------------------------------------------------ 判断
@@ -124,24 +129,48 @@ object ShortsDetector {
     fun isShortsActive(activity: Activity?): Boolean {
         val now = android.os.SystemClock.elapsedRealtime()
 
-        // 1) 视图层：Shorts 播放器视图仍在当前视图树里
+        // 1) 播放器视图：Shorts 播放器视图还在当前视图树里
         if (now - lastShortsRealtimeMs <= DECAY_MS && hasLiveShortsView(activity)) {
             lastShortsRealtimeMs = now
             lastReason = "Shorts 播放器视图在线"
             return true
         }
 
-        // 2) 几何兜底：竖屏全屏画面
-        if (looksLikeShortsGeometry(lastVideoBounds, screenBounds(activity))) {
+        // 2) 竖屏铺满几何
+        val screen = screenBounds(activity)
+        val bounds = resolveVideoBounds(activity)
+        if (looksLikeShortsGeometry(bounds, screen)) {
             lastShortsRealtimeMs = now
-            lastReason = "竖屏全屏画面（几何判定）"
+            val b = bounds!!
+            lastReason =
+                "竖屏铺满画面（几何判定：画面 ${b.width()}×${b.height()} / 屏幕 ${screen.width()}×${screen.height()}）"
             return true
         }
 
         if (now - lastShortsRealtimeMs > DECAY_MS) {
-            lastReason = "非 Shorts"
+            lastReason = "非 Shorts（画面 ${bounds?.width() ?: -1}×${bounds?.height() ?: -1} / " +
+                "屏幕 ${screen.width()}×${screen.height()}，无 Shorts 播放器视图）"
         }
         return false
+    }
+
+    /**
+     * 取当前视频画面的屏幕坐标矩形。
+     *
+     * 优先用浮层每 250ms 喂进来的值（[onVideoBounds]）；**浮层还没跑过一轮时**直接问
+     * [VideoSurfaceTracker]。这一点很关键：早期版本只看浮层喂的值，于是「浮层尚未挂载 /
+     * 尚未轮询」的那段时间里判定恒为「不是 Shorts」，自动匹配就先跑起来了。
+     */
+    private fun resolveVideoBounds(activity: Activity?): Rect? {
+        val cached = lastVideoBounds
+        if (cached != null && cached.width() > 0 && cached.height() > 0) return cached
+        val act = activity ?: return cached
+        return try {
+            VideoSurfaceTracker.findVideoRectOnScreen(act) ?: cached
+        } catch (t: Throwable) {
+            Log.d("直接查询画面区域失败: ${t.message}")
+            cached
+        }
     }
 
     private fun hasLiveShortsView(activity: Activity?): Boolean {

@@ -11,6 +11,7 @@ import com.b2y.danmaku.bili.BiliException
 import com.b2y.danmaku.bili.BiliSearchResult
 import com.b2y.danmaku.bili.DanmakuEntry
 import com.b2y.danmaku.danmaku.DanmakuItem
+import com.b2y.danmaku.hook.ActivityWatcher
 import com.b2y.danmaku.hook.PlaybackClockHolder
 import com.b2y.danmaku.hook.ShortsDetector
 import com.b2y.danmaku.hook.VideoSurfaceTracker
@@ -90,6 +91,10 @@ object VideoSessionController {
     private var pendingVideoId: String? = null
     private var pendingTitle: String? = null
 
+    /** 当前显示中的「选择要同步的 B 站视频」弹窗（进入 Shorts 时要能主动关掉） */
+    @Volatile
+    private var chooserDialog: AlertDialog? = null
+
     // ------------------------------------------------------------------ 对外接口
 
     fun onActivityResumed(act: Activity, ov: DanmakuOverlay) {
@@ -108,6 +113,8 @@ object VideoSessionController {
     fun onOverlayDetached() {
         overlay = null
         activity = null
+        // 弹窗挂在 Activity 上，浮层都没了就不该留着
+        main.post { dismissChooser() }
     }
 
     fun onMediaMetadata(
@@ -198,27 +205,65 @@ object VideoSessionController {
 
     // ------------------------------------------------------------------ Shorts 屏蔽
 
+    /** 判定 Shorts 时用哪个 Activity：优先前台 Activity（浮层没挂上时 `activity` 可能还是 null） */
+    private fun shortsCheckActivity(): android.app.Activity? = activity ?: ActivityWatcher.foregroundActivity()
+
     /**
-     * 自动匹配的入口统一走这里：当「Shorts 也匹配」被关掉、且当前确实在 Shorts 播放器里时，
-     * 直接放弃本次自动搜索。
+     * 当前是否应该屏蔽（Shorts 且设置里关掉了「Shorts 也匹配」）。
+     *
+     * 额外要求「确实在看播放页」（[isOnWatchScreen]）：这层保护是为了避免首页信息流里的
+     * 竖屏预览、或上一个播放页残留的画面尺寸被误判成 Shorts，从而把正常视频的弹幕也停掉。
+     */
+    private fun isShortsBlockedNow(): Boolean {
+        if (settings.matchInShorts) return false
+        if (!isOnWatchScreen()) return false
+        return ShortsDetector.isShortsActive(shortsCheckActivity())
+    }
+
+    /**
+     * 自动匹配的唯一闸门：命中屏蔽时放弃本次自动搜索，**并且把已经弹出来的
+     * 「选择要同步的 B 站视频」关掉、清空弹幕**。
+     *
+     * 后面的部分很关键：搜索是异步的，等结果回来时用户可能已经滑进 Shorts 了；
+     * 只在「发起搜索」那一刻拦截的话，对话框还是会冒出来（实测就是这个问题）。
      *
      * 注意：**只拦自动流程**。控制面板里的「粘贴 B 站链接 / 搜索关键词 / 番剧模式」是用户
      * 明确的手动意图，不做拦截。
      */
     private fun skipBecauseShorts(): Boolean {
-        if (settings.matchInShorts) return false
-        val act = activity
-        if (!ShortsDetector.isShortsActive(act)) return false
-        setStatus("当前是 Shorts，已按设置跳过弹幕匹配（可在悬浮面板中手动加载）")
+        if (!isShortsBlockedNow()) return false
         Log.i("Shorts 已屏蔽自动匹配（${ShortsDetector.lastReason}）")
+        dismissShortsBlockedUi()
+        setStatus("当前是 Shorts，已跳过弹幕匹配（要强制加载可在悬浮面板里手动粘贴 B 站链接）")
+        return true
+    }
+
+    /** 把「因为进了 Shorts 而不该存在」的界面收掉：选择弹窗 + 已加载的弹幕 */
+    private fun dismissShortsBlockedUi() {
+        dismissChooser()
+        val ov = overlay
+        if (ov != null && ov.danmakuCount() > 0) {
+            currentBvid = null
+            main.post { ov.clearDanmaku() }
+        }
+    }
+
+    /**
+     * 在「要显示选择弹窗」的最后一步再确认一次是否是 Shorts。
+     *
+     * 与 [skipBecauseShorts] 的区别是：这个在 `main.post {}` 之后执行，是最贴近用户看到
+     * 界面的那一层，作为兜底。
+     */
+    private fun shouldBlockChooser(): Boolean {
+        if (!isShortsBlockedNow()) return false
+        Log.i("选择弹窗被 Shorts 拦截（${ShortsDetector.lastReason}）")
+        dismissShortsBlockedUi()
+        setStatus("当前是 Shorts，已跳过弹幕匹配")
         return true
     }
 
     /** 供控制面板展示：当前是否因为 Shorts 而停用了弹幕 */
-    fun isShortsBlocked(): Boolean {
-        val act = activity ?: return false
-        return !settings.matchInShorts && ShortsDetector.isShortsActive(act)
-    }
+    fun isShortsBlocked(): Boolean = isShortsBlockedNow()
 
     fun shortsReason(): String = ShortsDetector.lastReason
 
@@ -510,13 +555,16 @@ object VideoSessionController {
     }
 
     private fun showChooser(results: List<BiliSearchResult>, ov: DanmakuOverlay) {
-        val act = activity ?: return
+        // 最后一道闸：搜索是异步的，结果回来时用户可能已经滑进 Shorts 了
+        if (shouldBlockChooser()) return
+        val act = shortsCheckActivity() ?: return
         if (act.isFinishing) return
+        dismissChooser()
         val labels = results.map {
             "${it.title}\n${it.author} · ${it.danmaku} 弹幕 · 匹配 ${(it.highlightRatio * 100).toInt()}%"
         }.toTypedArray()
         try {
-            AlertDialog.Builder(act)
+            val dialog = AlertDialog.Builder(act)
                 .setTitle("选择要同步的 B 站视频")
                 .setItems(labels) { _, which ->
                     val bvid = results[which].bvid
@@ -530,9 +578,32 @@ object VideoSessionController {
                     }
                 }
                 .setNegativeButton("取消", null)
-                .show()
+                .create()
+            dialog.setOnDismissListener { if (chooserDialog === dialog) chooserDialog = null }
+            chooserDialog = dialog
+            dialog.show()
         } catch (t: Throwable) {
             Log.w("显示选择弹窗失败", t)
+        }
+    }
+
+    private fun dismissChooser() {
+        val d = chooserDialog ?: return
+        chooserDialog = null
+        try {
+            d.dismiss()
+        } catch (t: Throwable) {
+            Log.w("关闭旧的选择弹窗失败", t)
+        }
+    }
+
+    /** 浮层刷新时调用：如果已经滑进 Shorts，把残留的选择弹窗收掉 */
+    fun onOverlayTick() {
+        if (settings.matchInShorts) return
+        if (chooserDialog == null) return
+        if (isShortsBlockedNow()) {
+            Log.i("浮层轮询发现已进入 Shorts，关闭选择弹窗")
+            dismissShortsBlockedUi()
         }
     }
 

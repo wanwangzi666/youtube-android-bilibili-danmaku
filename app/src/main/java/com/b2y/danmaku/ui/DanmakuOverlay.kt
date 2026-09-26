@@ -278,6 +278,12 @@ class DanmakuOverlay(private val activity: Activity) {
     private fun updateShortsState(videoRect: Rect?) {
         ShortsDetector.onVideoBounds(videoRect)
         val blocked = !currentSettings.matchInShorts && ShortsDetector.isShortsActive(activity)
+        // 交给会话控制器收掉可能残留的「选择要同步的 B 站视频」弹窗
+        try {
+            VideoSessionController.onOverlayTick()
+        } catch (t: Throwable) {
+            Log.d("onOverlayTick 失败: ${t.message}")
+        }
         if (blocked == shortsBlocked) {
             updateFloatButtonVisibility()
             return

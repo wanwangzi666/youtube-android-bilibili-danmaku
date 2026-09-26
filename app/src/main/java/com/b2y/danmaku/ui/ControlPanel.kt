@@ -56,10 +56,17 @@ class ControlPanel(
         box.addView(statusView)
 
         box.addView(sectionTitle("识别与加载"))
-        box.addView(check("Shorts 也匹配弹幕", local.matchInShorts) { checked ->
+        // 放在最顶上：刷 Shorts 被弹窗打扰时，用户第一个想找的就是它
+        box.addView(check("在 Shorts（竖屏短视频）里也匹配弹幕", local.matchInShorts) { checked ->
             local = local.copy(matchInShorts = checked)
             apply()
             refresh()
+        })
+        box.addView(TextView(activity).apply {
+            setTextColor(0xFFB0B0B0.toInt())
+            textSize = 11f
+            text = "取消勾选（默认）后：进入 Shorts 不再自动搜索，弹幕与悬浮按钮都会隐藏；" +
+                "下面的「粘贴 B 站链接 / 搜索关键词 / 番剧模式」仍可手动加载。"
         })
         box.addView(row(
             action("重新搜索") { VideoSessionController.retrySearch(); refresh() },

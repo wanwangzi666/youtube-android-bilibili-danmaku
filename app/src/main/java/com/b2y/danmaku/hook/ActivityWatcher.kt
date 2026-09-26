@@ -20,6 +20,10 @@ object ActivityWatcher {
     @Volatile
     private var application: Application? = null
 
+    /** 最近一次 onActivityResumed 的 Activity：判断「当前在哪个界面」时比 [overlays] 的 key 更准 */
+    @Volatile
+    private var resumedActivity: Activity? = null
+
     fun install(classLoader: ClassLoader) {
         XposedHelpers.findAndHookMethod(
             "android.app.Application",
@@ -42,6 +46,9 @@ object ActivityWatcher {
 
     fun currentActivity(): Activity? = overlays.keys.firstOrNull { !it.isFinishing }
 
+    /** 当前处于前台的 Activity（没有挂浮层的界面也能拿到） */
+    fun foregroundActivity(): Activity? = resumedActivity?.takeIf { !it.isFinishing } ?: currentActivity()
+
     private object Callbacks : Application.ActivityLifecycleCallbacks {
 
         override fun onActivityResumed(activity: Activity) {
@@ -51,6 +58,7 @@ object ActivityWatcher {
                 ) {
                     return
                 }
+                resumedActivity = activity
                 val overlay = overlays.getOrPut(activity) {
                     DanmakuOverlay(activity).also {
                         it.attach()
